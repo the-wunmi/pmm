@@ -164,6 +164,8 @@ func (c *Client) Run(ctx context.Context) error {
 		return ctx.Err()
 	}
 
+	c.backoff.Reset()
+
 	defer func() {
 		if err := dialResult.conn.Close(); err != nil {
 			c.l.Errorf("Connection closed: %s.", err)
@@ -602,7 +604,7 @@ func (c *Client) handleStartJobRequest(p *agentv1.StartJobRequest) error {
 			Port:     int(j.MysqlBackup.Port),
 			Socket:   j.MysqlBackup.Socket,
 		}
-		job = jobs.NewMySQLBackupJob(p.JobId, timeout, j.MysqlBackup.Name, dbConnCfg, locationConfig, j.MysqlBackup.Folder)
+		job = jobs.NewMySQLBackupJob(p.JobId, timeout, j.MysqlBackup.Name, dbConnCfg, locationConfig, j.MysqlBackup.Folder, j.MysqlBackup.Compression)
 
 	case *agentv1.StartJobRequest_MysqlRestoreBackup:
 		var locationConfig jobs.BackupLocationConfig
@@ -620,7 +622,7 @@ func (c *Client) handleStartJobRequest(p *agentv1.StartJobRequest) error {
 			return errors.Errorf("unknown location config: %T", j.MysqlRestoreBackup.LocationConfig)
 		}
 
-		job = jobs.NewMySQLRestoreJob(p.JobId, timeout, j.MysqlRestoreBackup.Name, locationConfig, j.MysqlRestoreBackup.Folder)
+		job = jobs.NewMySQLRestoreJob(p.JobId, timeout, j.MysqlRestoreBackup.Name, locationConfig, j.MysqlRestoreBackup.Folder, j.MysqlRestoreBackup.Compression)
 
 	case *agentv1.StartJobRequest_MongodbBackup:
 		var locationConfig jobs.BackupLocationConfig
@@ -649,7 +651,7 @@ func (c *Client) handleStartJobRequest(p *agentv1.StartJobRequest) error {
 		}
 
 		job, err = jobs.NewMongoDBBackupJob(p.JobId, timeout, j.MongodbBackup.Name, dsn, locationConfig,
-			j.MongodbBackup.EnablePitr, j.MongodbBackup.DataModel, j.MongodbBackup.Folder)
+			j.MongodbBackup.EnablePitr, j.MongodbBackup.DataModel, j.MongodbBackup.Folder, j.MongodbBackup.Compression)
 		if err != nil {
 			return err
 		}
@@ -682,7 +684,7 @@ func (c *Client) handleStartJobRequest(p *agentv1.StartJobRequest) error {
 
 		job = jobs.NewMongoDBRestoreJob(p.JobId, timeout, j.MongodbRestoreBackup.Name,
 			j.MongodbRestoreBackup.PitrTimestamp.AsTime(), dsn, locationConfig,
-			c.supervisor, j.MongodbRestoreBackup.Folder, j.MongodbRestoreBackup.PbmMetadata.Name)
+			c.supervisor, j.MongodbRestoreBackup.Folder, j.MongodbRestoreBackup.PbmMetadata.Name, j.MongodbRestoreBackup.Compression)
 	default:
 		return errors.Errorf("unknown job type: %T", j)
 	}
@@ -864,11 +866,11 @@ func getNetworkInformation(channel *channel.Channel) (latency, clockDrift time.D
 	var resp agentv1.ServerResponsePayload
 	resp, err = channel.SendAndWaitResponse(&agentv1.Ping{})
 	if err != nil {
-		return
+		return latency, clockDrift, err
 	}
 	if resp == nil {
 		err = channel.Wait()
-		return
+		return latency, clockDrift, err
 	}
 	roundtrip := time.Since(start)
 	currentTime := resp.(*agentv1.Pong).CurrentTime //nolint:forcetypeassert
@@ -876,11 +878,11 @@ func getNetworkInformation(channel *channel.Channel) (latency, clockDrift time.D
 	err = currentTime.CheckValid()
 	if err != nil {
 		err = errors.Wrap(err, "Failed to decode Ping")
-		return
+		return latency, clockDrift, err
 	}
 	latency = roundtrip / 2
 	clockDrift = serverTime.Sub(start) - latency
-	return
+	return latency, clockDrift, err
 }
 
 // GetNetworkInformation sends ping request to the server and returns info about latency and clock drift.
@@ -890,11 +892,11 @@ func (c *Client) GetNetworkInformation() (latency, clockDrift time.Duration, err
 	c.rw.RUnlock()
 	if channel == nil {
 		err = errors.New("not connected")
-		return
+		return latency, clockDrift, err
 	}
 
 	latency, clockDrift, err = getNetworkInformation(channel)
-	return
+	return latency, clockDrift, err
 }
 
 // GetServerConnectMetadata returns current server's metadata, or nil.
