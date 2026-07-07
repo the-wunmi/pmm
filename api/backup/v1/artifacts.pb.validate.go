@@ -210,7 +210,8 @@ func (e ArtifactValidationError) Error() string {
 		key,
 		e.field,
 		e.reason,
-		cause)
+		cause,
+	)
 }
 
 var _ error = ArtifactValidationError{}
@@ -312,7 +313,8 @@ func (e ListArtifactsRequestValidationError) Error() string {
 		key,
 		e.field,
 		e.reason,
-		cause)
+		cause,
+	)
 }
 
 var _ error = ListArtifactsRequestValidationError{}
@@ -448,7 +450,8 @@ func (e ListArtifactsResponseValidationError) Error() string {
 		key,
 		e.field,
 		e.reason,
-		cause)
+		cause,
+	)
 }
 
 var _ error = ListArtifactsResponseValidationError{}
@@ -563,7 +566,8 @@ func (e DeleteArtifactRequestValidationError) Error() string {
 		key,
 		e.field,
 		e.reason,
-		cause)
+		cause,
+	)
 }
 
 var _ error = DeleteArtifactRequestValidationError{}
@@ -665,7 +669,8 @@ func (e DeleteArtifactResponseValidationError) Error() string {
 		key,
 		e.field,
 		e.reason,
-		cause)
+		cause,
+	)
 }
 
 var _ error = DeleteArtifactResponseValidationError{}
@@ -823,7 +828,8 @@ func (e PitrTimerangeValidationError) Error() string {
 		key,
 		e.field,
 		e.reason,
-		cause)
+		cause,
+	)
 }
 
 var _ error = PitrTimerangeValidationError{}
@@ -936,7 +942,8 @@ func (e ListPitrTimerangesRequestValidationError) Error() string {
 		key,
 		e.field,
 		e.reason,
-		cause)
+		cause,
+	)
 }
 
 var _ error = ListPitrTimerangesRequestValidationError{}
@@ -1072,7 +1079,8 @@ func (e ListPitrTimerangesResponseValidationError) Error() string {
 		key,
 		e.field,
 		e.reason,
-		cause)
+		cause,
+	)
 }
 
 var _ error = ListPitrTimerangesResponseValidationError{}

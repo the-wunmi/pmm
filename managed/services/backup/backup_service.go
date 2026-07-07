@@ -70,7 +70,7 @@ type PerformBackupParams struct {
 }
 
 // PerformBackup starts on-demand backup.
-func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams) (string, error) { //nolint:cyclop
+func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams) (string, error) { //nolint:gocognit,cyclop
 	dbVersion, err := s.compatibilityService.CheckSoftwareCompatibilityForService(ctx, params.ServiceID)
 	if err != nil {
 		return "", err
@@ -134,7 +134,8 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 					return errors.New("the only supported backups mode for mongoDB is snapshot and PITR")
 				}
 
-				if err = services.CheckMongoDBBackupPreconditions(tx.Querier, params.Mode, svc.Cluster, svc.ServiceID, params.ScheduleID); err != nil {
+				err = services.CheckMongoDBBackupPreconditions(tx.Querier, params.Mode, svc.Cluster, svc.ServiceID, params.ScheduleID)
+				if err != nil {
 					return err
 				}
 
@@ -179,7 +180,12 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 				}
 			}
 
-			if job, dbConfig, err = s.prepareBackupJob(tx.Querier, svc, artifact.ID, jobType, params.Mode, params.DataModel, params.Retries, params.RetryInterval); err != nil { //nolint:lll
+			//nolint:noinlineerr
+			if job, dbConfig, err = s.prepareBackupJob(
+				tx.Querier, svc, artifact.ID,
+				jobType, params.Mode, params.DataModel, params.Retries,
+				params.RetryInterval,
+			); err != nil {
 				return err
 			}
 			return nil
@@ -275,7 +281,7 @@ func (s *Service) RestoreBackup(ctx context.Context, serviceID, artifactID strin
 
 	var params restoreJobParams
 	var restoreID string
-	if errTx := s.db.InTransactionContext(ctx, nil, func(tx *reform.TX) error {
+	errTx := s.db.InTransactionContext(ctx, nil, func(tx *reform.TX) error {
 		var err error
 		service, err := models.FindServiceByID(tx.Querier, serviceID)
 		if err != nil {
@@ -382,7 +388,8 @@ func (s *Service) RestoreBackup(ctx context.Context, serviceID, artifactID strin
 		}
 
 		return nil
-	}); errTx != nil {
+	})
+	if errTx != nil {
 		return "", errTx
 	}
 
@@ -435,7 +442,8 @@ func (s *Service) SwitchMongoPITR(ctx context.Context, serviceID string, enabled
 		dsn,
 		agent.Files(),
 		agent.TemplateDelimiters(service),
-		enabled)
+		enabled,
+	)
 }
 
 func (s *Service) startRestoreJob(params *restoreJobParams) error {

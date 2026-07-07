@@ -82,7 +82,7 @@ func (cmd *AddHAProxyCommand) RunCmd() (commands.Result, error) {
 		return nil, err
 	}
 
-	customLabels := commands.ParseKeyValuePair(cmd.CustomLabels)
+	customLabels := commands.ParseKeyValuePair(&cmd.CustomLabels)
 
 	if cmd.NodeID == "" {
 		status, err := agentlocal.GetStatus(agentlocal.DoNotRequestNetworkInfo)
@@ -99,7 +99,8 @@ func (cmd *AddHAProxyCommand) RunCmd() (commands.Result, error) {
 	}
 
 	if cmd.CredentialsSource != "" {
-		if err := cmd.GetCredentials(); err != nil {
+		err := cmd.GetCredentials()
+		if err != nil {
 			return nil, fmt.Errorf("failed to retrieve credentials from %s: %w", cmd.CredentialsSource, err)
 		}
 	}
@@ -117,8 +118,8 @@ func (cmd *AddHAProxyCommand) RunCmd() (commands.Result, error) {
 				Environment:         cmd.Environment,
 				Cluster:             cmd.Cluster,
 				ReplicationSet:      cmd.ReplicationSet,
-				CustomLabels:        customLabels,
-				MetricsMode:         cmd.MetricsModeFlags.MetricsMode.EnumValue(),
+				CustomLabels:        *customLabels,
+				MetricsMode:         cmd.MetricsMode.EnumValue(),
 				SkipConnectionCheck: cmd.SkipConnectionCheck,
 				TLSSkipVerify:       cmd.TLSSkipVerify,
 			},

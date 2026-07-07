@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,8 +31,6 @@ import (
 	"time"
 
 	"github.com/AlekSi/pointer"
-	"github.com/percona/saas/pkg/alert"
-	"github.com/percona/saas/pkg/common"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc/codes"
@@ -43,6 +42,8 @@ import (
 	alerting "github.com/percona/pmm/api/alerting/v1"
 	managementv1 "github.com/percona/pmm/api/management/v1"
 	"github.com/percona/pmm/managed/models"
+	"github.com/percona/pmm/managed/pi/alert"
+	"github.com/percona/pmm/managed/pi/common"
 	"github.com/percona/pmm/managed/services"
 	"github.com/percona/pmm/managed/utils/dir"
 )
@@ -104,9 +105,7 @@ func (s *Service) GetTemplates() map[string]models.Template {
 	defer s.rw.RUnlock()
 
 	res := make(map[string]models.Template, len(s.templates))
-	for n, r := range s.templates {
-		res[n] = r
-	}
+	maps.Copy(res, s.templates)
 	return res
 }
 
@@ -289,7 +288,8 @@ func validateUserTemplate(t *alert.Template) error {
 		params[p.Name] = value
 	}
 
-	if _, err := fillExprWithParams(t.Expr, params); err != nil {
+	_, err := fillExprWithParams(t.Expr, params)
+	if err != nil {
 		return err
 	}
 
@@ -409,17 +409,18 @@ func (s *Service) CreateTemplate(ctx context.Context, req *alerting.CreateTempla
 
 	templates, err := alert.Parse(strings.NewReader(req.Yaml), pParams)
 	if err != nil {
-		s.l.Errorf("failed to parse rule template form request: +%v", err)
+		s.l.Errorf("failed to parse rule template form request: %+v", err)
 		return nil, status.Errorf(codes.InvalidArgument, "Failed to parse rule template: %v.", err)
 	}
 
 	uniqueNames := make(map[string]struct{}, len(templates))
 	for _, t := range templates {
 		if _, ok := uniqueNames[t.Name]; ok {
-			return nil, status.Errorf(codes.InvalidArgument, "Template with name '%s' declared more that once.", t.Name)
+			return nil, status.Errorf(codes.InvalidArgument, "Template with name '%s' declared more than once.", t.Name)
 		}
 		uniqueNames[t.Name] = struct{}{}
-		if err = validateUserTemplate(&t); err != nil {
+		err = validateUserTemplate(&t)
+		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "%s.", err)
 		}
 	}
@@ -462,7 +463,7 @@ func (s *Service) UpdateTemplate(ctx context.Context, req *alerting.UpdateTempla
 
 	templates, err := alert.Parse(strings.NewReader(req.Yaml), parseParams)
 	if err != nil {
-		s.l.Errorf("failed to parse rule template form request: +%v", err)
+		s.l.Errorf("failed to parse rule template form request: %+v", err)
 		return nil, status.Error(codes.InvalidArgument, "Failed to parse rule template.")
 	}
 

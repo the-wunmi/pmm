@@ -35,6 +35,7 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 
+	"github.com/percona/pmm/managed/models"
 	pprofUtils "github.com/percona/pmm/managed/utils/pprof"
 	"github.com/percona/pmm/utils/logger"
 	"github.com/percona/pmm/utils/pdeathsig"
@@ -121,12 +122,14 @@ func (l *Logs) Zip(ctx context.Context, w io.Writer, pprofConfig *PprofConfig, l
 		}
 	}
 
-	if err := addAdminSummary(ctx, zw); err != nil {
+	err := addAdminSummary(ctx, zw)
+	if err != nil {
 		// do not let it break the whole archive
 		log.WithField("d", time.Since(start).Seconds()).Errorf("addAdminSummary: %+v", err)
 	}
 
-	if err := zw.Close(); err != nil {
+	err = zw.Close()
+	if err != nil {
 		return errors.Wrap(err, "failed to close zip file")
 	}
 	return nil
@@ -177,7 +180,7 @@ func (l *Logs) files(ctx context.Context, pprofConfig *PprofConfig, logReadLines
 		"/etc/supervisord.d/vmalert.ini",
 		"/etc/supervisord.d/vmproxy.ini",
 
-		"/usr/local/percona/pmm/config/pmm-agent.yaml",
+		models.AgentConfigFilePath,
 	} {
 		b, m, err := readFile(f)
 		files = append(files, fileContent{
@@ -222,9 +225,7 @@ func (l *Logs) files(ctx context.Context, pprofConfig *PprofConfig, logReadLines
 	if pprofConfig != nil {
 		filesSync := &sync.Mutex{}
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			traceBytes, err := pprofUtils.Trace(ctx, pprofConfig.TraceDuration)
 			filesSync.Lock()
 			files = append(files, fileContent{
@@ -233,11 +234,9 @@ func (l *Logs) files(ctx context.Context, pprofConfig *PprofConfig, logReadLines
 				Err:  err,
 			})
 			filesSync.Unlock()
-		}()
+		})
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			profileBytes, err := pprofUtils.Profile(ctx, pprofConfig.ProfileDuration)
 			filesSync.Lock()
 			files = append(files, fileContent{
@@ -246,11 +245,9 @@ func (l *Logs) files(ctx context.Context, pprofConfig *PprofConfig, logReadLines
 				Err:  err,
 			})
 			filesSync.Unlock()
-		}()
+		})
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			heapBytes, err := pprofUtils.Heap(true)
 			filesSync.Lock()
 			files = append(files, fileContent{
@@ -259,7 +256,7 @@ func (l *Logs) files(ctx context.Context, pprofConfig *PprofConfig, logReadLines
 				Err:  err,
 			})
 			filesSync.Unlock()
-		}()
+		})
 
 		wg.Wait()
 	}
@@ -314,7 +311,7 @@ func readLog(name string, maxLines int) ([]byte, time.Time, error) {
 	}
 
 	res := []byte{}
-	r.Do(func(v interface{}) {
+	r.Do(func(v any) {
 		if v != nil {
 			res = append(res, v.([]byte)...) //nolint:forcetypeassert
 		}

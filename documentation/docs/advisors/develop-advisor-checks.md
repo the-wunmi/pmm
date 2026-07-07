@@ -4,6 +4,8 @@ PMM offers sets of checks that can detect common security threats, performance d
 
 As a developer, you can create custom checks to cover additional use cases, relevant to your specific database infrastructure.
 
+Starting with PMM 3.5.0, all advisor checks are built-in and use the v2 check format. Custom checks must also use the v2 format.
+
 ## Check components
 
 A check is a combination of:
@@ -11,9 +13,7 @@ A check is a combination of:
 - A query for extracting data from the database.
 - Python script for converting extracted data into check results. This is actually a [Starlark](https://github.com/google/starlark-go) script, which is a Python dialect that adds more imperative features than Python. The script's execution environment is sandboxed, and no I/O can be done from it.
 
-All checks are self-contained in the first phase, as well as in most of the planned phases.
-
-This means that extracted data is processed on the PMM side and not sent back to Percona Platform.
+All checks are self-contained in the first phase, as well as in most of the planned phases. This means that extracted data is processed on the PMM side.
 
 ## Backend
 
@@ -21,7 +21,7 @@ At the backend, pmm-managed does the following:
 {.power-number}
 
 1. pmm-managed checks that the installation is opted-in for checks.
-2. pmm-managed downloads files with checks from Percona Platform.
+2. pmm-managed downloads files with checks.
 3. pmm-managed verifies file signatures using a list of hard-coded public keys. At least one signature should be correct.
 4. pmm-managed sends queries to pmm-agent and gathers results.
 5. pmm-managed executes check scripts that produce alert information.
@@ -39,9 +39,6 @@ PMM uses Alertmanager API to get information about failed checks and show them o
 ## Format for checks
 Advisor checks use the following format:
 
-??? note alert alert-info "Checks format"
-
-    {% raw %}
     ```yaml
     ---
     checks:
@@ -58,21 +55,21 @@ Advisor checks use the following format:
             query: VARIABLES
 
           - type: METRICS_INSTANT
-            query: mysql_global_status_uptime{service_name=~"{{.ServiceName}}"}
+            query: mysql_global_status_uptime{service_name=~"{% raw %}{{.ServiceName}}{% endraw %}"}
 
           - type: METRICS_INSTANT
-            query: mysql_global_status_uptime{service_name=~"{{.ServiceName}}"}
+            query: mysql_global_status_uptime{service_name=~"{% raw %}{{.ServiceName}}{% endraw %}"}
             parameters:
               lookback: 5m
 
           - type: METRICS_RANGE
-            query: avg by (node_name) (avg_over_time(node_load1{node_name=~"{{.NodeName}}"}[5m]))
+            query: avg by (node_name) (avg_over_time(node_load1{node_name=~"{% raw %}{{.NodeName}}{% endraw %}"}[5m]))
             parameters:
               range: 15m
               step: 5m
 
           - type: METRICS_RANGE
-            query: avg by (node_name) (avg_over_time(node_load1{node_name=~"{{.NodeName}}"}[5m]))
+            query: avg by (node_name) (avg_over_time(node_load1{node_name=~"{% raw %}{{.NodeName}}{% endraw %}"}[5m]))
             parameters:
               lookback: 5m
               range: 15m
@@ -151,7 +148,6 @@ Advisor checks use the following format:
 
               return results
     ```
-    {% endraw %}
 
 ## Checks script
 
@@ -166,7 +162,7 @@ PMM groups failed checks by their severity, and displays them under **Advisors C
 
 Checks can include the following fields:
 
-- **Version** (integer, required): defines what other properties are expected, what types are supported, what is expected from the script and what it can expect from the execution environment, etc.
+- **Version** (integer, required): must be set to `2`. Defines what other properties are expected, what types are supported, what is expected from the script and what it can expect from the execution environment, etc.
 - **Name** (string, required): defines machine-readable name (ID).
 - **Summary** (string, required): defines short human-readable description.
 - **Description** (string, required): defines long human-readable description.
@@ -214,15 +210,15 @@ Expand the table below for the list of checks types that you can use to define y
 ## Develop checks
 
 !!! note alert alert-primary "Development/debugging only"
-    Note that check development in PMM is currently for **debugging only** and **NOT for production use!**  Future releases plan to include the option to run custom local checks in addition to hosted Percona Platform checks.
+    Note that check development in PMM is currently for **debugging only** and **NOT for production use!**  Future releases plan to include the option to run custom local checks in addition to default PMM checks.
 
 To develop custom checks for PMM:
 {.power-number}
 
-1. Install the latest PMM Server and PMM Client builds following the [installation instructions](https://www.percona.com/software/pmm/quickstart#).
+1. Install the latest PMM Server and PMM Client builds following the [installation instructions](../quickstart/quickstart.md).
 2. Run PMM Server with special environment variables:
 
-    - `PMM_DEV_ADVISOR_CHECKS_FILE=/srv/custom-checks.yml` to use checks from the local files instead of downloading them from Percona Platform.
+    - `PMM_DEV_ADVISOR_CHECKS_FILE=/srv/custom-checks.yml` to use checks from the local files instead of default PMM ones.
     - `PMM_ADVISORS_CHECKS_DISABLE_START_DELAY=true` to disable the default check execution start delay. This is currently set to one minute, so that checks run upon system start.
 
     ```sh
@@ -234,7 +230,7 @@ To develop custom checks for PMM:
 
 3. Log into Grafana with credentials **admin/admin**.
 
-4. Go to **PMM Configuration > Settings > Advanced Settings** and make sure the **Advisors** option is enabled.
+4. Go to **Configuration > Settings > Advanced settings** and make sure the **Advisors** option is enabled.
 
 5. Create `/srv/custom-checks.yml` inside the `pmm-server` container with the content of your check. Specify **dev** advisor in your check.
 

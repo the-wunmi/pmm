@@ -93,11 +93,13 @@ func (j *MySQLBackupJob) DSN() string {
 
 // Run starts Job execution.
 func (j *MySQLBackupJob) Run(ctx context.Context, send Send) error {
-	if err := j.binariesInstalled(); err != nil {
+	err := j.binariesInstalled()
+	if err != nil {
 		return errors.WithStack(err)
 	}
 
-	if err := j.backup(ctx); err != nil {
+	err = j.backup(ctx)
+	if err != nil {
 		return errors.WithStack(err)
 	}
 
@@ -125,7 +127,8 @@ func (j *MySQLBackupJob) Run(ctx context.Context, send Send) error {
 }
 
 func (j *MySQLBackupJob) binariesInstalled() error {
-	if _, err := exec.LookPath(xtrabackupBin); err != nil {
+	_, err := exec.LookPath(xtrabackupBin)
+	if err != nil {
 		return errors.Wrapf(err, "lookpath: %s", xtrabackupBin)
 	}
 
@@ -136,7 +139,8 @@ func (j *MySQLBackupJob) binariesInstalled() error {
 	}
 
 	if j.locationConfig.Type == S3BackupLocationType {
-		if _, err := exec.LookPath(xbcloudBin); err != nil {
+		_, err = exec.LookPath(xbcloudBin)
+		if err != nil {
 			return errors.Wrapf(err, "lookpath: %s", xbcloudBin)
 		}
 	}
@@ -154,7 +158,8 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 	}
 
 	defer func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
+		err := os.RemoveAll(tmpDir)
+		if err != nil {
 			j.l.WithError(err).Warn("failed to remove temporary directory")
 		}
 	}()
@@ -196,8 +201,8 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 	}
 
 	var xbcloudCmd *exec.Cmd
-	switch {
-	case j.locationConfig.Type == S3BackupLocationType:
+	switch j.locationConfig.Type {
+	case S3BackupLocationType:
 		xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--stream=xbstream")
 
 		artifactFolder := path.Join(j.folder, j.name)
@@ -239,7 +244,8 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 	}
 
 	defer func() {
-		if err := xtrabackupCmd.Wait(); err != nil {
+		err := xtrabackupCmd.Wait()
+		if err != nil {
 			cancel()
 			if rerr != nil {
 				rerr = errors.Wrapf(rerr, "xtrabackup wait error: %s", err)
@@ -262,7 +268,8 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 	}
 
 	defer func() {
-		if err := xbcloudCmd.Wait(); err != nil {
+		err := xbcloudCmd.Wait()
+		if err != nil {
 			cancel()
 			if rerr != nil {
 				rerr = errors.Wrapf(rerr, "xbcloud wait error: %s", err)

@@ -13,14 +13,12 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Package agents provides jobs functionality.
 package agents
 
 import (
 	"context"
 	"time"
 
-	"github.com/AlekSi/pointer"
 	"github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -68,7 +66,7 @@ func NewJobsService(db *reform.DB, registry *Registry, retention retentionServic
 }
 
 // RestartJob restarts a job with the given jobID.
-func (s *JobsService) RestartJob(ctx context.Context, jobID string) error {
+func (s *JobsService) RestartJob(ctx context.Context, jobID string) error { //nolint:gocognit
 	var job *models.Job
 	var artifact *models.Artifact
 	var locationModel *models.BackupLocation
@@ -170,7 +168,7 @@ func (s *JobsService) RestartJob(ctx context.Context, jobID string) error {
 	return nil
 }
 
-func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result *agentv1.JobResult) { //nolint:cyclop
+func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result *agentv1.JobResult) { //nolint:gocognit,cyclop
 	var scheduleID string
 	if errTx := s.db.InTransaction(func(t *reform.TX) error { //nolint:contextcheck
 		job, err := models.FindJobByID(t.Querier, result.JobId)
@@ -195,7 +193,8 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 				models.UpdateArtifactParams{
 					Status:   models.SuccessBackupStatus.Pointer(),
 					Metadata: artifactMetadataFromProto(result.MysqlBackup.Metadata),
-				})
+				},
+			)
 			if err != nil {
 				return err
 			}
@@ -217,7 +216,8 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 					Status:           models.SuccessBackupStatus.Pointer(),
 					IsShardedCluster: result.MongodbBackup.IsShardedCluster,
 					Metadata:         metadata,
-				})
+				},
+			)
 			if err != nil {
 				return err
 			}
@@ -238,7 +238,7 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 					return errors.Wrapf(err, "cannot get scheduled task %s", scheduleID)
 				}
 				taskData := task.Data
-				taskData.MongoDBBackupTask.CommonBackupTaskData.Folder = artifact.Name
+				taskData.MongoDBBackupTask.Folder = artifact.Name
 
 				params := models.ChangeScheduledTaskParams{
 					Data: taskData,
@@ -260,8 +260,9 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 				job.Data.MySQLRestoreBackup.RestoreID,
 				models.ChangeRestoreHistoryItemParams{
 					Status:     models.SuccessRestoreStatus,
-					FinishedAt: pointer.ToTime(models.Now()),
-				})
+					FinishedAt: new(models.Now()),
+				},
+			)
 			if err != nil {
 				return err
 			}
@@ -271,9 +272,10 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 				return errors.Errorf("result type %s doesn't match job type %s", models.MongoDBRestoreBackupJob, job.Type)
 			}
 
-			if job.Data.MongoDBRestoreBackup.DataModel == models.LogicalDataModel {
+			switch job.Data.MongoDBRestoreBackup.DataModel {
+			case models.LogicalDataModel:
 				s.l.Info("restore successfully completed")
-			} else if job.Data.MongoDBRestoreBackup.DataModel == models.PhysicalDataModel {
+			case models.PhysicalDataModel:
 				s.l.Info("restore successfully completed, PMM will restart mongod and pbm-agent")
 				if err := s.runMongoPostRestore(t.Querier, job.Data.MongoDBRestoreBackup.ServiceID); err != nil {
 					s.l.WithError(err).Error("failed to restart components after restore from a physical backup")
@@ -283,8 +285,9 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 						job.Data.MongoDBRestoreBackup.RestoreID,
 						models.ChangeRestoreHistoryItemParams{
 							Status:     models.ErrorRestoreStatus,
-							FinishedAt: pointer.ToTime(models.Now()),
-						})
+							FinishedAt: new(models.Now()),
+						},
+					)
 					return err
 				} else {
 					s.l.Info("successfully restarted mongod and pbm-agent on all cluster members")
@@ -296,8 +299,9 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 				job.Data.MongoDBRestoreBackup.RestoreID,
 				models.ChangeRestoreHistoryItemParams{
 					Status:     models.SuccessRestoreStatus,
-					FinishedAt: pointer.ToTime(models.Now()),
-				})
+					FinishedAt: new(models.Now()),
+				},
+			)
 			if err != nil {
 				return err
 			}
@@ -336,16 +340,18 @@ func (s *JobsService) handleJobError(job *models.Job) error {
 			job.Data.MySQLRestoreBackup.RestoreID,
 			models.ChangeRestoreHistoryItemParams{
 				Status:     models.ErrorRestoreStatus,
-				FinishedAt: pointer.ToTime(models.Now()),
-			})
+				FinishedAt: new(models.Now()),
+			},
+		)
 	case models.MongoDBRestoreBackupJob:
 		_, err = models.ChangeRestoreHistoryItem(
 			s.db.Querier,
 			job.Data.MongoDBRestoreBackup.RestoreID,
 			models.ChangeRestoreHistoryItemParams{
 				Status:     models.ErrorRestoreStatus,
-				FinishedAt: pointer.ToTime(models.Now()),
-			})
+				FinishedAt: new(models.Now()),
+			},
+		)
 	default:
 		return errors.Errorf("unknown job type %s", job.Type)
 	}
@@ -694,13 +700,13 @@ func (s *JobsService) runMongoPostRestore(querier *reform.Querier, serviceID str
 		return errors.Errorf("service '%s' has an empty cluster name and needs to be manually restarted", service.ServiceID)
 	}
 
-	serviceType := models.MongoDBServiceType
 	clusterMembers, err := models.FindServices(
 		querier,
 		models.ServiceFilters{
-			ServiceType: &serviceType,
+			ServiceType: new(models.MongoDBServiceType),
 			Cluster:     service.Cluster,
-		})
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -846,7 +852,8 @@ func createJobLog(querier *reform.Querier, jobID, data string, chunkID int, last
 			ChunkID:   chunkID,
 			Data:      data,
 			LastChunk: lastChunk,
-		})
+		},
+	)
 	return err
 }
 
@@ -866,8 +873,7 @@ func artifactMetadataFromProto(metadata *backuppb.Metadata) *models.Metadata {
 	res.FileList = files
 
 	if metadata.RestoreTo != nil {
-		t := metadata.RestoreTo.AsTime()
-		res.RestoreTo = &t
+		res.RestoreTo = new(metadata.RestoreTo.AsTime())
 	}
 
 	if metadata.BackupToolMetadata != nil {

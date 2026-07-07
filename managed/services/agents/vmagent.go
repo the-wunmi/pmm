@@ -73,14 +73,13 @@ func vmAgentConfig(scrapeCfg string, params victoriaMetricsParams) *agentv1.SetS
 	interfaceToBind := envvars.GetInterfaceToBind()
 
 	// Only keep the specified exceptions as command line arguments
-	args := []string{
+	args := append([]string{
 		"-envflag.enable=true",
 		"-envflag.prefix=VMAGENT_",
 		"-remoteWrite.tmpDataPath={{.tmp_dir}}/vmagent-temp-dir",
 		"-promscrape.config={{.TextFiles.vmagentscrapecfg}}",
 		"-httpListenAddr=" + interfaceToBind + ":{{.listen_port}}",
-	}
-	args = append(args, params.VMAgentArgs()...)
+	}, params.VMAgentArgs()...)
 
 	sort.Strings(args)
 
@@ -90,7 +89,7 @@ func vmAgentConfig(scrapeCfg string, params victoriaMetricsParams) *agentv1.SetS
 	// First, collect all VMAGENT_ environment variables from the system
 	systemEnvs := make(map[string]string)
 	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, envvars.ENVvmAgentPrefix) {
+		if strings.HasPrefix(env, envvars.EnvVMAgentPrefix) {
 			parts := strings.SplitN(env, "=", 2)
 			if len(parts) == 2 {
 				systemEnvs[parts[0]] = parts[1]

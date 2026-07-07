@@ -16,7 +16,6 @@
 package backup
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"testing"
@@ -60,8 +59,8 @@ func setup(t *testing.T, q *reform.Querier, serviceType models.ServiceType, serv
 		ServiceName: serviceName,
 		Cluster:     clusterName,
 		NodeID:      node.NodeID,
-		Address:     pointer.ToString("127.0.0.1"),
-		Port:        pointer.ToUint16(60000),
+		Address:     new("127.0.0.1"),
+		Port:        new(uint16(60000)),
 	})
 	require.NoError(t, err)
 
@@ -113,7 +112,7 @@ func TestStartBackup(t *testing.T) {
 				backupError := fmt.Errorf("error: %w", tc.backupError)
 				backupService.On("PerformBackup", mock.Anything, mock.Anything).
 					Return("", backupError).Once()
-				ctx := context.Background()
+				ctx := t.Context()
 				resp, err := backupSvc.StartBackup(ctx, &backupv1.StartBackupRequest{
 					ServiceId:     *agent.ServiceID,
 					LocationId:    "locationID",
@@ -213,7 +212,7 @@ func TestStartBackup(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Run("starting mongodb physical snapshot is successful", func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			backupService := &mockBackupService{}
 			mockedPbmPITRService := &mockPbmPITRService{}
 			backupSvc := NewBackupsService(db, backupService, nil, nil, nil, mockedPbmPITRService)
@@ -301,7 +300,7 @@ func TestStartBackup(t *testing.T) {
 		})
 
 		t.Run("check folder and artifact name", func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			backupService := &mockBackupService{}
 			mockedPbmPITRService := &mockPbmPITRService{}
 
@@ -368,7 +367,7 @@ func TestStartBackup(t *testing.T) {
 						assert.Equal(t, test.ErrString, err.Error())
 						return
 					}
-					assert.NoError(t, err)
+					require.NoError(t, err)
 					assert.NotNil(t, res)
 				})
 			}
@@ -379,7 +378,7 @@ func TestStartBackup(t *testing.T) {
 }
 
 func TestScheduledBackups(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sqlDB := testdb.Open(t, models.SkipFixtures, nil)
 	db := reform.NewDB(sqlDB, postgresql.Dialect, reform.NewPrintfLogger(t.Logf))
 	t.Cleanup(func() {
@@ -442,17 +441,17 @@ func TestScheduledBackups(t *testing.T) {
 
 			changeReq := &backupv1.ChangeScheduledBackupRequest{
 				ScheduledBackupId: task.ID,
-				Enabled:           pointer.ToBool(false),
-				CronExpression:    pointer.ToString("2 * * * *"),
+				Enabled:           new(false),
+				CronExpression:    new("2 * * * *"),
 				StartTime:         timestamppb.New(time.Now()),
-				Name:              pointer.ToString("test"),
-				Description:       pointer.ToString("test"),
-				Retries:           pointer.ToUint32(0),
+				Name:              new("test"),
+				Description:       new("test"),
+				Retries:           new(uint32(0)),
 				RetryInterval:     durationpb.New(time.Second),
 			}
 			_, err = backupSvc.ChangeScheduledBackup(ctx, changeReq)
 
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			task, err = models.FindScheduledTaskByID(db.Querier, res.ScheduledBackupId)
 			require.NoError(t, err)
 			data = task.Data.MySQLBackupTask
@@ -467,7 +466,7 @@ func TestScheduledBackups(t *testing.T) {
 		t.Run("list", func(t *testing.T) {
 			res, err := backupSvc.ListScheduledBackups(ctx, &backupv1.ListScheduledBackupsRequest{})
 
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Len(t, res.ScheduledBackups, 1)
 		})
 
@@ -497,7 +496,7 @@ func TestScheduledBackups(t *testing.T) {
 			_, err = backupSvc.RemoveScheduledBackup(ctx, &backupv1.RemoveScheduledBackupRequest{
 				ScheduledBackupId: task.ID,
 			})
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			task, err = models.FindScheduledTaskByID(db.Querier, task.ID)
 			assert.Nil(t, task)
@@ -507,7 +506,7 @@ func TestScheduledBackups(t *testing.T) {
 				ScheduleID: id,
 			})
 
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Empty(t, artifacts)
 		})
 	})
@@ -516,7 +515,7 @@ func TestScheduledBackups(t *testing.T) {
 		agent := setup(t, db.Querier, models.MongoDBServiceType, t.Name(), "cluster")
 
 		t.Run("PITR unsupported for physical model", func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			schedulerService := &mockScheduleService{}
 			mockedPbmPITRService := &mockPbmPITRService{}
 			backupSvc := NewBackupsService(db, nil, nil, schedulerService, nil, mockedPbmPITRService)
@@ -538,7 +537,7 @@ func TestScheduledBackups(t *testing.T) {
 		})
 
 		t.Run("normal", func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			schedulerService := &mockScheduleService{}
 			mockedPbmPITRService := &mockPbmPITRService{}
 			backupSvc := NewBackupsService(db, nil, nil, schedulerService, nil, mockedPbmPITRService)
@@ -560,7 +559,7 @@ func TestScheduledBackups(t *testing.T) {
 }
 
 func TestGetLogs(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sqlDB := testdb.Open(t, models.SkipFixtures, nil)
 	db := reform.NewDB(sqlDB, postgresql.Dialect, reform.NewPrintfLogger(t.Logf))
 	backupService := &mockBackupService{}
@@ -612,13 +611,13 @@ func TestGetLogs(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		for chunkID := 0; chunkID < 5; chunkID++ {
+		for chunkID := range 5 {
 			_, err = models.CreateJobLog(db.Querier, models.CreateJobLogParams{
 				JobID:   job.ID,
 				ChunkID: chunkID,
 				Data:    "not important",
 			})
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		}
 
 		for _, tc := range testCases {
@@ -627,7 +626,7 @@ func TestGetLogs(t *testing.T) {
 				Offset:     tc.offset,
 				Limit:      tc.limit,
 			})
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			chunkIDs := make([]uint32, 0, len(logs.Logs))
 			for _, log := range logs.Logs {
 				chunkIDs = append(chunkIDs, log.ChunkId)
@@ -638,7 +637,7 @@ func TestGetLogs(t *testing.T) {
 }
 
 func TestListPitrTimeranges(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sqlDB := testdb.Open(t, models.SkipFixtures, nil)
 	t.Cleanup(func() {
 		require.NoError(t, sqlDB.Close())
@@ -692,7 +691,7 @@ func TestListPitrTimeranges(t *testing.T) {
 			Status:      models.PendingBackupStatus,
 			Compression: models.S2,
 		})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.NotEmpty(t, artifact.ID)
 
 		response, err := backupSvc.ListPitrTimeranges(ctx, &backupv1.ListPitrTimerangesRequest{
@@ -723,7 +722,7 @@ func TestListPitrTimeranges(t *testing.T) {
 			Status:      models.PendingBackupStatus,
 			Compression: models.ZSTD,
 		})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.NotEmpty(t, artifact.ID)
 
 		response, err := backupSvc.ListPitrTimeranges(ctx, &backupv1.ListPitrTimerangesRequest{
@@ -950,7 +949,7 @@ func TestArtifactMetadataListToProto(t *testing.T) {
 		Status:      models.PendingBackupStatus,
 		Compression: models.S2,
 	})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	artifact, err = models.UpdateArtifact(db.Querier, artifact.ID, models.UpdateArtifactParams{
 		Metadata: &models.Metadata{
@@ -959,12 +958,10 @@ func TestArtifactMetadataListToProto(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	restoreTo := time.Unix(123, 456)
-
 	artifact, err = models.UpdateArtifact(db.Querier, artifact.ID, models.UpdateArtifactParams{
 		Metadata: &models.Metadata{
 			FileList:       []models.File{{Name: "dir2", IsDirectory: true}, {Name: "file4"}, {Name: "file5"}, {Name: "file6"}},
-			RestoreTo:      &restoreTo,
+			RestoreTo:      new(time.Unix(123, 456)),
 			BackupToolData: &models.BackupToolData{PbmMetadata: &models.PbmMetadata{Name: "backup tool data name"}},
 		},
 	})

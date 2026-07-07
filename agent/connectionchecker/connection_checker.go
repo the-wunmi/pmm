@@ -32,6 +32,7 @@ import (
 	"github.com/lib/pq"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -88,7 +89,8 @@ func (cc *ConnectionChecker) Check(ctx context.Context, msg *agentv1.CheckConnec
 			msg.Tls,
 			msg.TextFiles,
 			msg.TlsSkipVerify,
-			id)
+			id,
+		)
 	case inventoryv1.ServiceType_SERVICE_TYPE_PROXYSQL_SERVICE:
 		return cc.checkProxySQLConnection(ctx, msg.Dsn)
 	case inventoryv1.ServiceType_SERVICE_TYPE_EXTERNAL_SERVICE, inventoryv1.ServiceType_SERVICE_TYPE_HAPROXY_SERVICE:
@@ -106,7 +108,13 @@ func (cc *ConnectionChecker) sqlPing(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
-func (cc *ConnectionChecker) checkMySQLConnection(ctx context.Context, dsn string, files *agentv1.TextFiles, tlsSkipVerify bool, id uint32) *agentv1.CheckConnectionResponse { //nolint:lll
+func (cc *ConnectionChecker) checkMySQLConnection(
+	ctx context.Context,
+	dsn string,
+	files *agentv1.TextFiles,
+	tlsSkipVerify bool,
+	id uint32,
+) *agentv1.CheckConnectionResponse {
 	var res agentv1.CheckConnectionResponse
 	var err error
 
@@ -219,7 +227,8 @@ func (cc *ConnectionChecker) checkMongoDBConnection(ctx context.Context, dsn str
 
 	if !serverInfo.ArbiterOnly {
 		resp := client.Database("admin").RunCommand(ctx, bson.D{{Key: "getDiagnosticData", Value: 1}})
-		if err = resp.Err(); err != nil {
+		err = resp.Err()
+		if err != nil {
 			cc.l.Debugf("checkMongoDBConnection: failed to runCommand getDiagnosticData: %s", err)
 			res.Error = err.Error()
 			return &res
@@ -352,7 +361,7 @@ func (cc *ConnectionChecker) checkExternalConnection(ctx context.Context, uri st
 		return &res
 	}
 
-	var parser expfmt.TextParser
+	parser := expfmt.NewTextParser(model.UTF8Validation)
 	_, err = parser.TextToMetricFamilies(strings.NewReader(string(body)))
 	if err != nil {
 		res.Error = fmt.Sprintf("Unexpected exporter's response format: %v", err)

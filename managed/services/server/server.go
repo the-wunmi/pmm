@@ -61,6 +61,7 @@ type Server struct {
 	supervisord          supervisordService
 	telemetryService     telemetryService
 	grafanaClient        grafanaClient
+	qanClient            healthChecker
 	haService            haService
 	updater              *Updater
 	nomad                nomadService
@@ -94,6 +95,7 @@ type Params struct {
 	Supervisord          supervisordService
 	TelemetryService     telemetryService
 	GrafanaClient        grafanaClient
+	QANClient            healthChecker
 	Updater              *Updater
 	Dus                  *distribution.Service
 	HAService            haService
@@ -103,7 +105,8 @@ type Params struct {
 // NewServer returns new server for Server service.
 func NewServer(params *Params) (*Server, error) {
 	path := "/srv"
-	if _, err := os.Stat(path); err != nil {
+	_, err := os.Stat(path)
+	if err != nil {
 		return nil, errors.WithStack(err)
 	}
 	path = filepath.Join(path, "pmm-update.json")
@@ -119,6 +122,7 @@ func NewServer(params *Params) (*Server, error) {
 		supervisord:          params.Supervisord,
 		telemetryService:     params.TelemetryService,
 		grafanaClient:        params.GrafanaClient,
+		qanClient:            params.QANClient,
 		updater:              params.Updater,
 		haService:            params.HAService,
 		nomad:                params.Nomad,
@@ -143,7 +147,7 @@ func (s *Server) UpdateSettingsFromEnv(ctx context.Context, env []string) []erro
 		return errs
 	}
 
-	err := s.db.InTransaction(func(tx *reform.TX) error {
+	err := s.db.InTransactionContext(ctx, nil, func(tx *reform.TX) error {
 		_, err := models.UpdateSettings(tx, envSettings)
 		return err
 	})
@@ -220,8 +224,10 @@ func (s *Server) Readiness(ctx context.Context, req *serverv1.ReadinessRequest) 
 		"grafana":         s.grafanaClient,
 		"victoriametrics": s.vmdb,
 		"vmalert":         s.vmalert,
+		"qan":             s.qanClient,
 	} {
-		if err := svc.IsReady(ctx); err != nil {
+		err := svc.IsReady(ctx)
+		if err != nil {
 			s.l.Errorf("%s readiness check failed: %+v", n, err)
 			notReady = true
 		}
@@ -262,7 +268,8 @@ func (s *Server) CheckUpdates(ctx context.Context, req *serverv1.CheckUpdatesReq
 	}
 
 	if req.Force {
-		if err := s.updater.ForceCheckUpdates(ctx); err != nil {
+		err := s.updater.ForceCheckUpdates(ctx)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -295,12 +302,14 @@ func (s *Server) CheckUpdates(ctx context.Context, req *serverv1.CheckUpdatesReq
 	res.LastCheck = timestamppb.New(lastCheck)
 
 	if v.Installed.BuildTime != nil {
-		t := v.Installed.BuildTime.UTC().Truncate(24 * time.Hour) // return only date
+		// return only date
+		t := v.Installed.BuildTime.UTC().Truncate(24 * time.Hour) //nolint:mnd
 		res.Installed.Timestamp = timestamppb.New(t)
 	}
 
 	if v.Latest.DockerImage != "" {
-		t := v.Latest.BuildTime.UTC().Truncate(24 * time.Hour) // return only date
+		// return only date
+		t := v.Latest.BuildTime.UTC().Truncate(24 * time.Hour) //nolint:mnd
 		res.Latest.Timestamp = timestamppb.New(t)
 	}
 
@@ -378,7 +387,8 @@ func (s *Server) StartUpdate(ctx context.Context, req *serverv1.StartUpdateReque
 
 // UpdateStatus returns PMM Server update status.
 func (s *Server) UpdateStatus(ctx context.Context, req *serverv1.UpdateStatusRequest) (*serverv1.UpdateStatusResponse, error) {
-	if _, err := os.Stat(s.pmmUpdateAuthFile); err != nil && os.IsNotExist(err) {
+	_, err := os.Stat(s.pmmUpdateAuthFile)
+	if err != nil && os.IsNotExist(err) {
 		return &serverv1.UpdateStatusResponse{
 			Done: true,
 		}, nil
@@ -395,7 +405,7 @@ func (s *Server) UpdateStatus(ctx context.Context, req *serverv1.UpdateStatusReq
 	// wait up to 30 seconds for new log lines
 	var lines []string
 	var newOffset uint32
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second) //nolint:mnd
 	defer cancel()
 	for ctx.Err() == nil {
 		if !s.updater.IsRunning() {
@@ -412,7 +422,7 @@ func (s *Server) UpdateStatus(ctx context.Context, req *serverv1.UpdateStatusReq
 			break
 		}
 
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond) //nolint:mnd
 	}
 
 	return &serverv1.UpdateStatusResponse{
@@ -433,12 +443,13 @@ func (s *Server) writeUpdateAuthToken(token string) error {
 	a := &pmmUpdateAuth{
 		AuthToken: token,
 	}
-	f, err := os.OpenFile(s.pmmUpdateAuthFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600|os.ModeExclusive)
+	f, err := os.OpenFile(s.pmmUpdateAuthFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600|os.ModeExclusive) //nolint:mnd
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	defer func() {
-		if err = f.Close(); err != nil {
+		err = f.Close()
+		if err != nil {
 			s.l.Error(err)
 		}
 	}()
@@ -456,7 +467,8 @@ func (s *Server) readUpdateAuthToken() (string, error) {
 		return "", errors.WithStack(err)
 	}
 	defer func() {
-		if err = f.Close(); err != nil {
+		err = f.Close()
+		if err != nil {
 			s.l.Error(err)
 		}
 	}()
@@ -467,8 +479,7 @@ func (s *Server) readUpdateAuthToken() (string, error) {
 }
 
 // convertSettings merges database settings and settings from environment variables into API response.
-// Checking if PMM is connected to Platform is separated from settings for security and concurrency reasons.
-func (s *Server) convertSettings(settings *models.Settings, connectedToPlatform bool) *serverv1.Settings {
+func (s *Server) convertSettings(settings *models.Settings, disableInternalPgQan bool) *serverv1.Settings {
 	res := &serverv1.Settings{
 		UpdatesEnabled:   settings.IsUpdatesEnabled(),
 		TelemetryEnabled: settings.IsTelemetryEnabled(),
@@ -488,15 +499,16 @@ func (s *Server) convertSettings(settings *models.Settings, connectedToPlatform 
 		AdvisorEnabled:       settings.IsAdvisorsEnabled(),
 		AzurediscoverEnabled: settings.IsAzureDiscoverEnabled(),
 		PmmPublicAddress:     settings.PMMPublicAddress,
+		EnableInternalPgQan:  !disableInternalPgQan,
 
 		AlertingEnabled:         settings.IsAlertingEnabled(),
 		BackupManagementEnabled: settings.IsBackupManagementEnabled(),
-		ConnectedToPlatform:     connectedToPlatform,
 
 		TelemetrySummaries: s.telemetryService.GetSummaries(),
 
-		EnableAccessControl: settings.IsAccessControlEnabled(),
-		DefaultRoleId:       uint32(settings.DefaultRoleID),
+		EnableAccessControl:  settings.IsAccessControlEnabled(),
+		DefaultRoleId:        uint32(settings.DefaultRoleID),
+		UpdateSnoozeDuration: durationpb.New(settings.Updates.SnoozeDuration),
 	}
 
 	return res
@@ -528,10 +540,22 @@ func (s *Server) GetSettings(ctx context.Context, req *serverv1.GetSettingsReque
 		return nil, err
 	}
 
-	_, err = models.GetPerconaSSODetails(ctx, s.db.Querier)
+	var disabledInternalPgQan bool
+	if s.haService.Params().Enabled {
+		// In HA mode, internal QAN is always disabled as PostgreSQL is external
+		disabledInternalPgQan = true
+	} else {
+		internalPgQanAgent, err := s.getInternalPgQANAgent(s.db.Querier)
+		if err != nil {
+			// if we can't get the agent, log the error and set it to disabled.
+			s.l.Errorf("failed to get internal pgQAN agent: %v", err)
+		} else {
+			disabledInternalPgQan = internalPgQanAgent.Disabled
+		}
+	}
 
 	return &serverv1.GetSettingsResponse{
-		Settings: s.convertSettings(settings, err == nil),
+		Settings: s.convertSettings(settings, disabledInternalPgQan),
 	}, nil
 }
 
@@ -554,7 +578,8 @@ func (s *Server) validateChangeSettingsRequest(ctx context.Context, req *serverv
 	metricsRes := req.MetricsResolutions
 
 	if req.SshKey != nil {
-		if err := s.validateSSHKey(ctx, *req.SshKey); err != nil {
+		err := s.validateSSHKey(ctx, *req.SshKey)
+		if err != nil {
 			return err
 		}
 	}
@@ -569,6 +594,10 @@ func (s *Server) validateChangeSettingsRequest(ctx context.Context, req *serverv
 		return status.Error(codes.FailedPrecondition, "Telemetry is configured via PMM_ENABLE_TELEMETRY environment variable.")
 	}
 
+	if req.EnableInternalPgQan != nil && s.envSettings.EnableInternalPgQAN != nil && *req.EnableInternalPgQan != *s.envSettings.EnableInternalPgQAN {
+		return status.Error(codes.FailedPrecondition, "QAN for internal PostgreSQL is already configured via an environment variable.")
+	}
+
 	if req.EnableAlerting != nil && s.envSettings.EnableAlerting != nil && *req.EnableAlerting != *s.envSettings.EnableAlerting {
 		return status.Error(codes.FailedPrecondition, "Alerting is configured via ENABLE_ALERTING environment variable.")
 	}
@@ -578,7 +607,10 @@ func (s *Server) validateChangeSettingsRequest(ctx context.Context, req *serverv
 	}
 
 	if !canUpdateDurationSetting(metricsRes.GetHr().AsDuration(), s.envSettings.MetricsResolutions.HR) {
-		return status.Error(codes.FailedPrecondition, "High resolution for metrics is set via PMM_METRICS_RESOLUTION_HR (or PMM_METRICS_RESOLUTION) environment variable.") //nolint:lll
+		return status.Error(
+			codes.FailedPrecondition,
+			"High resolution for metrics is set via PMM_METRICS_RESOLUTION_HR (or PMM_METRICS_RESOLUTION) environment variable.",
+		)
 	}
 
 	if !canUpdateDurationSetting(metricsRes.GetMr().AsDuration(), s.envSettings.MetricsResolutions.MR) {
@@ -593,6 +625,10 @@ func (s *Server) validateChangeSettingsRequest(ctx context.Context, req *serverv
 		return status.Error(codes.FailedPrecondition, "Data retention for queries is set via PMM_DATA_RETENTION environment variable.")
 	}
 
+	if !canUpdateDurationSetting(req.UpdateSnoozeDuration.AsDuration(), s.envSettings.UpdateSnoozeDuration) {
+		return status.Error(codes.FailedPrecondition, "Update snooze duration is set via PMM_UPDATE_SNOOZE_DURATION environment variable.")
+	}
+
 	return nil
 }
 
@@ -600,11 +636,13 @@ func (s *Server) validateChangeSettingsRequest(ctx context.Context, req *serverv
 func (s *Server) ChangeSettings(ctx context.Context, req *serverv1.ChangeSettingsRequest) (*serverv1.ChangeSettingsResponse, error) {
 	s.envRW.RLock()
 	defer s.envRW.RUnlock()
-	if err := s.validateChangeSettingsRequest(ctx, req); err != nil {
+	err := s.validateChangeSettingsRequest(ctx, req)
+	if err != nil {
 		return nil, err
 	}
 
 	var newSettings, oldSettings *models.Settings
+	var disableInternalPgQan bool
 	errTX := s.db.InTransactionContext(ctx, nil, func(tx *reform.TX) error {
 		var err error
 		if oldSettings, err = models.GetSettings(tx); err != nil {
@@ -622,6 +660,7 @@ func (s *Server) ChangeSettings(ctx context.Context, req *serverv1.ChangeSetting
 			EnableAlerting:         req.EnableAlerting,
 			EnableBackupManagement: req.EnableBackupManagement,
 			EnableAccessControl:    req.EnableAccessControl,
+			EnableInternalPgQAN:    req.EnableInternalPgQan,
 			AdvisorsRunInterval: models.AdvisorsRunIntervals{
 				RareInterval:     advisorsRunInterval.GetRareInterval().AsDuration(),
 				StandardInterval: advisorsRunInterval.GetStandardInterval().AsDuration(),
@@ -653,10 +692,20 @@ func (s *Server) ChangeSettings(ctx context.Context, req *serverv1.ChangeSetting
 
 		// absent value means "do not change"
 		if req.SshKey != nil {
-			if err = s.writeSSHKey(pointer.GetString(req.SshKey)); err != nil {
+			err = s.writeSSHKey(pointer.GetString(req.SshKey))
+			if err != nil {
 				s.l.Error(errors.WithStack(err))
 				return status.Errorf(codes.Internal, "failed to write SSH key: %s", err.Error())
 			}
+		}
+
+		// if QAN for internal PostgreSQL is toggled, we need to update the agent's disabled status
+		if req.EnableInternalPgQan != nil {
+			disabled, err := s.handleInternalQANToggle(ctx, tx.Querier, req.EnableInternalPgQan)
+			if err != nil {
+				return err
+			}
+			disableInternalPgQan = disabled
 		}
 
 		return nil
@@ -664,7 +713,8 @@ func (s *Server) ChangeSettings(ctx context.Context, req *serverv1.ChangeSetting
 	if errTX != nil {
 		return nil, errTX
 	}
-	if err := s.UpdateConfigurations(ctx); err != nil {
+	err = s.UpdateConfigurations(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -673,14 +723,16 @@ func (s *Server) ChangeSettings(ctx context.Context, req *serverv1.ChangeSetting
 		s.checksService.UpdateIntervals(
 			newSettings.SaaS.AdvisorRunIntervals.RareInterval,
 			newSettings.SaaS.AdvisorRunIntervals.StandardInterval,
-			newSettings.SaaS.AdvisorRunIntervals.FrequentInterval)
+			newSettings.SaaS.AdvisorRunIntervals.FrequentInterval,
+		)
 	}
 
 	// When Advisor is moved from disabled to enabled state, force checks download and execution.
 	var advisorsStarted bool
 	if !oldSettings.IsAdvisorsEnabled() && newSettings.IsAdvisorsEnabled() {
 		advisorsStarted = true
-		if err := s.checksService.StartChecks(nil); err != nil {
+		err := s.checksService.StartChecks(nil)
+		if err != nil {
 			s.l.Error(err)
 		}
 	}
@@ -699,37 +751,72 @@ func (s *Server) ChangeSettings(ctx context.Context, req *serverv1.ChangeSetting
 		}
 	}
 
-	_, err := models.GetPerconaSSODetails(ctx, s.db.Querier)
-
 	return &serverv1.ChangeSettingsResponse{
-		Settings: s.convertSettings(newSettings, err == nil),
+		Settings: s.convertSettings(newSettings, disableInternalPgQan),
 	}, nil
+}
+
+func (s *Server) getInternalPgQANAgent(q *reform.Querier) (*models.Agent, error) {
+	agents, err := models.FindAgents(q, models.AgentFilters{
+		PMMAgentID: models.PMMServerAgentID,
+		AgentType:  new(models.QANPostgreSQLPgStatementsAgentType),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to find agents: %w", err)
+	}
+	if len(agents) == 0 {
+		return nil, fmt.Errorf("internal pgQAN agent not found")
+	}
+	return agents[0], nil
+}
+
+func (s *Server) handleInternalQANToggle(ctx context.Context, q *reform.Querier, enableInternalPgQan *bool) (bool, error) {
+	if s.haService.Params().Enabled {
+		if *enableInternalPgQan {
+			return false, status.Error(codes.FailedPrecondition, "Enabling QAN on PMM's own database is not supported in HA mode.")
+		}
+
+		// If trying to disable in HA mode, it's already disabled, so just skip
+		return true, nil
+	}
+
+	internalQanAgent, err := s.getInternalPgQANAgent(q)
+	if err != nil {
+		return false, fmt.Errorf("failed to get QAN agent: %w", err)
+	}
+	if internalQanAgent == nil {
+		return false, fmt.Errorf("internal QAN agent not found")
+	}
+
+	newAgent, err := models.ChangeAgent(q, internalQanAgent.AgentID, &models.ChangeAgentParams{
+		Enabled: enableInternalPgQan,
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to change QAN agent state: %w", err)
+	}
+
+	s.agentsState.RequestStateUpdate(ctx, internalQanAgent.AgentID)
+	return newAgent.Disabled, nil
 }
 
 // UpdateConfigurations updates supervisor config and requests configuration update for VictoriaMetrics components.
 func (s *Server) UpdateConfigurations(ctx context.Context) error {
 	settings, err := models.GetSettings(s.db)
 	if err != nil {
-		return errors.Wrap(err, "failed to get settings")
-	}
-	ssoDetails, err := models.GetPerconaSSODetails(ctx, s.db.Querier)
-	if err != nil {
-		if !errors.Is(err, models.ErrNotConnectedToPortal) {
-			return errors.Wrap(err, "failed to get SSO details")
-		}
+		return fmt.Errorf("failed to get settings: %w", err)
 	}
 
 	if err := s.nomad.UpdateConfiguration(settings); err != nil {
-		return errors.Wrap(err, "failed to update nomad configuration")
+		return fmt.Errorf("failed to update nomad configuration: %w", err)
 	}
-	if err := s.supervisord.UpdateConfiguration(settings, ssoDetails); err != nil {
-		return errors.Wrap(err, "failed to update supervisord configuration")
+	if err := s.supervisord.UpdateConfiguration(settings); err != nil {
+		return fmt.Errorf("failed to update supervisord configuration: %w", err)
 	}
 	s.vmdb.RequestConfigurationUpdate()
 	s.vmalert.RequestConfigurationUpdate()
 
 	if err := s.agentsState.UpdateAgentsState(ctx); err != nil {
-		return errors.Wrap(err, "failed to update agents state")
+		return fmt.Errorf("failed to update agents state: %w", err)
 	}
 	return nil
 }
@@ -758,12 +845,12 @@ func (s *Server) writeSSHKey(sshKey string) error {
 		return errors.WithStack(err)
 	}
 	sshDirPath := path.Join(usr.HomeDir, ".ssh")
-	if err = os.MkdirAll(sshDirPath, 0o700); err != nil {
+	if err = os.MkdirAll(sshDirPath, 0o700); err != nil { //nolint:mnd
 		return errors.WithStack(err)
 	}
 
 	keysPath := path.Join(sshDirPath, "authorized_keys")
-	if err = os.WriteFile(keysPath, []byte(sshKey), 0o600); err != nil {
+	if err = os.WriteFile(keysPath, []byte(sshKey), 0o600); err != nil { //nolint:mnd
 		return errors.WithStack(err)
 	}
 	return nil

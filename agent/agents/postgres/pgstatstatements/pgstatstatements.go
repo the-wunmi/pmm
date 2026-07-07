@@ -108,7 +108,14 @@ func getPgStatStatementsCacheSize(q *reform.Querier, l *logrus.Entry) uint {
 	return pgSSCacheSize
 }
 
-func newPgStatStatementsQAN(q *reform.Querier, dbCloser io.Closer, agentID string, maxQueryLength int32, disableCommentsParsing bool, l *logrus.Entry) (*PGStatStatementsQAN, error) { //nolint:lll
+func newPgStatStatementsQAN(
+	q *reform.Querier,
+	dbCloser io.Closer,
+	agentID string,
+	maxQueryLength int32,
+	disableCommentsParsing bool,
+	l *logrus.Entry,
+) (*PGStatStatementsQAN, error) {
 	cacheSize := getPgStatStatementsCacheSize(q, l)
 	statementCache, err := newStatementsCache(statementsMap{}, retainStatStatements, cacheSize, l)
 	if err != nil {
@@ -154,12 +161,14 @@ func (m *PGStatStatementsQAN) Run(ctx context.Context) {
 	}()
 
 	// add current stat statements to cache, so they are not send as new on first iteration with incorrect timestamps
+	var current statementsMap
 	var running bool
 	var err error
 	m.changes <- agents.Change{Status: inventoryv1.AgentStatus_AGENT_STATUS_STARTING}
 
-	if current, _, err := m.getStatStatementsExtended(ctx); err == nil {
-		if err = m.statementsCache.Set(current); err == nil {
+	if current, _, err = m.getStatStatementsExtended(ctx); err == nil {
+		err = m.statementsCache.Set(current)
+		if err == nil {
 			m.l.Debugf("Got %d initial stat statements.", len(current))
 			running = true
 			m.changes <- agents.Change{Status: inventoryv1.AgentStatus_AGENT_STATUS_RUNNING}
@@ -255,7 +264,8 @@ func (m *PGStatStatementsQAN) getStatStatementsExtended(
 	defer rows.Close() //nolint:errcheck
 
 	for ctx.Err() == nil {
-		if err = q.NextRow(row, rows); err != nil {
+		err = q.NextRow(row, rows)
+		if err != nil {
 			if errors.Is(err, reform.ErrNoRows) {
 				err = nil
 			}

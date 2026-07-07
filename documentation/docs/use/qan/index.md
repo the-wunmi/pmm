@@ -1,30 +1,33 @@
-# About Query Analytics (QAN)
+# About Query Analytics
 
-The Query Analytics dashboard shows how queries are executed and where they spend their time. It helps you analyze database queries over time, optimize database performance, and find and remedy the source of problems.
+Query Analytics (QAN) helps you find and fix slow queries. Use it to identify performance bottlenecks, understand query patterns, and track optimization progress.
 
 ![!image](../../images/PMM_Query_Analytics.jpg)
 
-Query Analytics supports MySQL, MongoDB and PostgreSQL with the following minimum requirements:
+## Stored metrics and Real-time QAN
 
-=== "MySQL requirements"
-    - MySQL 5.1 or later (if using the slow query log)
-    - MySQL 5.6.9 or later (if using Performance Schema)
-    - Percona Server 5.6+ (all Performance Schema and slow log features)
-    - MariaDB 5.2+ (for user statistics), 10.0+ (for Performance Schema)
+Query Analytics offers two ways to analyze queries:
 
-    Some limitations and tuning options apply only when using MySQL’s Performance Schema.  
-    See [Query Analytics with MySQL](../qan/mysql.md#limitations-with-performance-schema).
+- **Stored metrics**: Choose stored metrics when you want to  analyze completed queries to identify patterns, find slow queries, and track optimization progress over time. 
 
-=== "PostgreSQL requirements"
-    - PostgreSQL 11 or later
-    - `pg_stat_monitor` extension (recommended) or `pg_stat_statements` extension
-    - Appropriate `shared_preload_libraries` configuration
-    - Superuser privileges for PMM monitoring account
+- **Real-time**: Choose real-time when you need to identify problematic operations during an active incident.  
 
-=== "MongoDB requirements"
-    - MongoDB 6.0 or later (4.4+ may work with limited features)
+### Real-time vs. Stored metrics capabilities
 
-    ### Requirements for Profiler
+| Feature | Real-time Analytics (RTA) | Stored metrics (QAN) |
+|---------|---------------------------|------------------------|
+| **Data type** | Currently executing queries | Completed queries |
+| **Purpose** | Live troubleshooting | Performance optimization |
+| **Time range** | Live data (updates every 1-5 seconds) | Historical data (configurable retention) |
+| **Use case** | Spot problematic operations during incidents | Analyze trends and optimize past performance |
+| **Database support** | MongoDB (Technical Preview) | MySQL, PostgreSQL, MongoDB |
+| **Data retention** | Temporary (refreshes with new data) | Persistent (stored for analysis) |
+| **Refresh rate** | Live updates (1-5 seconds, configurable) | Historical snapshots |
+| **Query details** | Raw operation data from `db.currentOp()` (no aggregation, grouping, or processing) | Aggregated metrics and query fingerprints |
+| **Best for** | "What's slowing down my database right now?" | "Which queries should I optimize?" |
+
+### Requirements for Profiler
+
     - Profiling enabled for Query Analytics
     - Appropriate user roles: `clusterMonitor`, `read` (local), and custom monitoring roles. For MongoDB 8.0+: Additional `directShardOperations` role required for sharded clusters
 
@@ -58,3 +61,12 @@ When LBAC is enabled:
 - users see only queries from databases and services permitted by their assigned roles
 - filter dropdown options are dynamically restricted based on user permissions
 - data visibility is controlled through Prometheus-style label selectors
+
+## Troubleshooting
+
+If you experience Query Analytics performance issues in low-memory environments (less than 16 GB RAM), see [ClickHouse memory issues](../../troubleshoot/qan_issues.md#clickhouse-memory-issues-in-low-memory-environments).
+
+## Get started
+
+- [Stored metrics QAN](../qan/QAN-stored-metrics.md) 
+- [Real-time analytics for MongoDB](../qan/QAN-realtime-analytics.md) 

@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlekSi/pointer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -34,6 +33,7 @@ import (
 	"gopkg.in/reform.v1/dialects/postgresql"
 
 	"github.com/percona/pmm/managed/models"
+	"github.com/percona/pmm/managed/utils/env"
 	"github.com/percona/pmm/managed/utils/envvars"
 	"github.com/percona/pmm/managed/utils/testdb"
 	"github.com/percona/pmm/managed/utils/tests"
@@ -119,7 +119,7 @@ func TestUpdater(t *testing.T) {
 				want: &versionInfo{
 					Version:     "3.0.1",
 					DockerImage: "percona/pmm-server:3.0.1",
-					BuildTime:   pointer.To(time.Date(2024, 3, 20, 15, 48, 7, 145620000, time.UTC)),
+					BuildTime:   new(time.Date(2024, 3, 20, 15, 48, 7, 145620000, time.UTC)),
 				},
 			},
 			{
@@ -250,7 +250,7 @@ func TestUpdater(t *testing.T) {
 				u := NewUpdater(watchtowerURL, gRPCMessageMaxSize, db)
 				parsed, err := version.Parse(tt.args.currentVersion)
 				require.NoError(t, err)
-				_, next := u.next(context.Background(), *parsed, tt.args.results)
+				_, next := u.next(t.Context(), *parsed, tt.args.results)
 				require.NoError(t, err)
 				assert.Equal(t, tt.want.Version, next.Version.String())
 				assert.Equal(t, tt.want.DockerImage, next.DockerImage)
@@ -282,7 +282,7 @@ func TestUpdater(t *testing.T) {
 		u := NewUpdater(watchtowerURL, gRPCMessageMaxSize, db)
 
 		t.Run("LatestFromProduction", func(t *testing.T) {
-			_, latest, err := u.latest(context.Background())
+			_, latest, err := u.latest(t.Context())
 			require.NoError(t, err)
 			if latest != nil {
 				assert.True(t, strings.HasPrefix(latest.Version.String(), "3."),
@@ -293,10 +293,10 @@ func TestUpdater(t *testing.T) {
 			versionServiceURL, err := envvars.GetPlatformAddress() // defaults to production
 			require.NoError(t, err)
 			defer func() {
-				t.Setenv(envvars.EnvPlatformAddress, versionServiceURL)
+				t.Setenv(env.PlatformAddress, versionServiceURL)
 			}()
-			t.Setenv(envvars.EnvPlatformAddress, "https://check-dev.percona.com")
-			_, latest, err := u.latest(context.Background())
+			t.Setenv(env.PlatformAddress, "https://check-dev.percona.com")
+			_, latest, err := u.latest(t.Context())
 			require.NoError(t, err)
 			assert.True(t, strings.HasPrefix(latest.Version.String(), "3."),
 				"latest version of PMM should start with a '3.' prefix")
@@ -313,7 +313,7 @@ func TestUpdater(t *testing.T) {
 		require.NoError(t, err)
 
 		u := NewUpdater(watchtowerURL, gRPCMessageMaxSize, db)
-		_, latest, err := u.latest(context.Background())
+		_, latest, err := u.latest(t.Context())
 		require.NoError(t, err)
 		assert.Equal(t, "2.41.1", latest.Version.String())
 		assert.Equal(t, "2.41.1", latest.DockerImage)
@@ -322,11 +322,11 @@ func TestUpdater(t *testing.T) {
 
 	t.Run("with disabled updates check", func(t *testing.T) {
 		_, err := models.UpdateSettings(db.Querier, &models.ChangeSettingsParams{
-			EnableUpdates: pointer.ToBool(false),
+			EnableUpdates: new(false),
 		})
 		require.NoError(t, err)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
 
 		u := NewUpdater(watchtowerURL, gRPCMessageMaxSize, db)

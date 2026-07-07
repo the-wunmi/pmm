@@ -18,7 +18,6 @@ package scheduler
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/percona/pmm/managed/models"
@@ -175,7 +174,7 @@ func TestValidation(t *testing.T) {
 				_, err := NewMySQLBackupTask(tt.params)
 
 				if tt.errMsg != "" {
-					assert.EqualError(t, err, tt.errMsg)
+					require.EqualError(t, err, tt.errMsg)
 					return
 				}
 
@@ -344,7 +343,7 @@ func TestValidation(t *testing.T) {
 				_, err := NewMongoDBBackupTask(tt.params)
 
 				if tt.errMsg != "" {
-					assert.EqualError(t, err, tt.errMsg)
+					require.EqualError(t, err, tt.errMsg)
 					return
 				}
 

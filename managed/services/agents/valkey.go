@@ -17,7 +17,6 @@ package agents
 
 import (
 	"sort"
-	"time"
 
 	agentv1 "github.com/percona/pmm/api/agent/v1"
 	inventoryv1 "github.com/percona/pmm/api/inventory/v1"
@@ -33,17 +32,19 @@ func valkeyExporterConfig(node *models.Node, service *models.Service, exporter *
 	tdp := exporter.TemplateDelimiters(service)
 	args := []string{
 		"--web.listen-address=" + listenAddress + ":" + tdp.Left + " .listen_port " + tdp.Right,
+		"--include-config-metrics",
+		"--include-system-metrics",
 	}
 
 	if exporter.ExporterOptions.MetricsPath != "" {
 		args = append(args, "--web.telemetry-path="+exporter.ExporterOptions.MetricsPath)
 	}
 
-	dnsParams := models.DSNParams{
-		DialTimeout: 3 * time.Second,
-	}
+	dsnParams := models.DSNParams{}
+	connectionTimeout := exporter.EffectiveDialTimeout()
 
-	args = append(args, "--redis.addr="+exporter.DSN(service, dnsParams, nil, pmmAgentVersion))
+	args = append(args, "--redis.addr="+exporter.DSN(service, dsnParams, nil, pmmAgentVersion))
+	args = append(args, "--connection-timeout="+connectionTimeout.String())
 	args = withLogLevel(args, exporter.LogLevel, pmmAgentVersion, false)
 	sort.Strings(args)
 
