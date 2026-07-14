@@ -107,9 +107,19 @@ func (s *BackupService) StartBackup(ctx context.Context, req *backupv1.StartBack
 		return nil, status.Errorf(codes.InvalidArgument, "Invalid data model: %s", req.DataModel.String())
 	}
 
+	compression, err := convertCompressionToBackupCompression(req.Compression)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid compression: %s", req.Compression.String())
+	}
+
 	svc, err := models.FindServiceByID(s.db.Querier, req.ServiceId)
 	if err != nil {
 		return nil, err
+	}
+
+	err = compression.ValidateForServiceType(svc.ServiceType)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Compression validation failed: %v", err)
 	}
 
 	if svc.ServiceType == models.MongoDBServiceType {
@@ -127,6 +137,7 @@ func (s *BackupService) StartBackup(ctx context.Context, req *backupv1.StartBack
 		Retries:       req.Retries,
 		RetryInterval: req.RetryInterval.AsDuration(),
 		Folder:        req.Folder,
+		Compression:   compression,
 	})
 	if err != nil {
 		return nil, convertError(err)
@@ -180,6 +191,16 @@ func (s *BackupService) ScheduleBackup(ctx context.Context, req *backupv1.Schedu
 			return status.Errorf(codes.InvalidArgument, "Invalid data model: %s", req.DataModel.String())
 		}
 
+		compression, err := convertCompressionToBackupCompression(req.Compression)
+		if err != nil {
+			return status.Errorf(codes.InvalidArgument, "Invalid compression: %s", req.Compression.String())
+		}
+
+		err = compression.ValidateForServiceType(svc.ServiceType)
+		if err != nil {
+			return status.Errorf(codes.InvalidArgument, "Compression validation failed: %v", err)
+		}
+
 		backupParams := &scheduler.BackupTaskParams{
 			ServiceID:     svc.ServiceID,
 			ClusterName:   svc.Cluster,
@@ -192,6 +213,7 @@ func (s *BackupService) ScheduleBackup(ctx context.Context, req *backupv1.Schedu
 			Retries:       req.Retries,
 			RetryInterval: req.RetryInterval.AsDuration(),
 			Folder:        req.Folder,
+			Compression:   compression,
 		}
 
 		var task scheduler.Task
@@ -633,6 +655,32 @@ func (s *BackupService) ListPitrTimeranges(ctx context.Context, req *backupv1.Li
 	}, nil
 }
 
+// ListServiceCompression returns available compression methods for a service.
+func (s *BackupService) ListServiceCompression(_ context.Context, req *backupv1.ListServiceCompressionRequest) (*backupv1.ListServiceCompressionResponse, error) {
+	svc, err := models.FindServiceByID(s.db.Querier, req.ServiceId)
+	if err != nil {
+		return nil, err
+	}
+
+	supportedCompressions := models.GetSupportedCompressions(svc.ServiceType)
+	if supportedCompressions == nil {
+		return nil, status.Errorf(codes.Unimplemented, "backup compression is not yet supported for service type: %s", svc.ServiceType)
+	}
+
+	compressionMethods := make([]backupv1.BackupCompression, 0, len(supportedCompressions))
+	for _, compression := range supportedCompressions {
+		protoCompression, err := convertBackupCompression(compression)
+		if err != nil {
+			return nil, err
+		}
+		compressionMethods = append(compressionMethods, protoCompression)
+	}
+
+	return &backupv1.ListServiceCompressionResponse{
+		CompressionMethods: compressionMethods,
+	}, nil
+}
+
 func convertTaskToScheduledBackup(task *models.ScheduledTask,
 	services map[string]*models.Service,
 	locationModels map[string]*models.BackupLocation,
@@ -684,6 +732,11 @@ func convertTaskToScheduledBackup(task *models.ScheduledTask,
 		return nil, err
 	}
 
+	scheduledBackup.Compression, err = convertBackupCompression(commonBackupData.Compression)
+	if err != nil {
+		return nil, err
+	}
+
 	if commonBackupData.RetryInterval > 0 {
 		scheduledBackup.RetryInterval = durationpb.New(commonBackupData.RetryInterval)
 	}
@@ -731,6 +784,31 @@ func convertModelToBackupModel(dataModel backupv1.DataModel) (models.DataModel, 
 		return models.PhysicalDataModel, nil
 	default:
 		return "", fmt.Errorf("unknown backup mode: %s", dataModel)
+	}
+}
+
+func convertCompressionToBackupCompression(compression backupv1.BackupCompression) (models.BackupCompression, error) {
+	switch compression {
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_QUICKLZ:
+		return models.QuickLZ, nil
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_ZSTD:
+		return models.ZSTD, nil
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_LZ4:
+		return models.LZ4, nil
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_S2:
+		return models.S2, nil
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_GZIP:
+		return models.GZIP, nil
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_SNAPPY:
+		return models.Snappy, nil
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_PGZIP:
+		return models.PGZIP, nil
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_NONE:
+		return models.None, nil
+	case backupv1.BackupCompression_BACKUP_COMPRESSION_DEFAULT:
+		return models.Default, nil
+	default:
+		return "", fmt.Errorf("unknown backup compression: %s", compression)
 	}
 }
 
@@ -853,6 +931,31 @@ func convertBackupStatus(status models.BackupStatus) (backupv1.BackupStatus, err
 	}
 }
 
+func convertBackupCompression(compression models.BackupCompression) (backupv1.BackupCompression, error) {
+	switch compression {
+	case models.QuickLZ:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_QUICKLZ, nil
+	case models.ZSTD:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_ZSTD, nil
+	case models.LZ4:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_LZ4, nil
+	case models.S2:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_S2, nil
+	case models.GZIP:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_GZIP, nil
+	case models.Snappy:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_SNAPPY, nil
+	case models.PGZIP:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_PGZIP, nil
+	case models.Default:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_DEFAULT, nil
+	case models.None:
+		return backupv1.BackupCompression_BACKUP_COMPRESSION_NONE, nil
+	default:
+		return 0, fmt.Errorf("invalid compression '%s'", compression)
+	}
+}
+
 func convertArtifact(
 	a *models.Artifact,
 	services map[string]*models.Service,
@@ -891,6 +994,11 @@ func convertArtifact(
 		return nil, fmt.Errorf("artifact id '%s': %w", a.ID, err)
 	}
 
+	compression, err := convertBackupCompression(a.Compression)
+	if err != nil {
+		return nil, fmt.Errorf("artifact id '%s': %w", a.ID, err)
+	}
+
 	return &backupv1.Artifact{
 		ArtifactId:       a.ID,
 		Name:             a.Name,
@@ -906,6 +1014,7 @@ func convertArtifact(
 		IsShardedCluster: a.IsShardedCluster,
 		Folder:           a.Folder,
 		MetadataList:     artifactMetadataListToProto(a),
+		Compression:      compression,
 	}, nil
 }
 

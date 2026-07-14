@@ -1154,7 +1154,7 @@ var databaseSchema = [][]string{
 	112: {
 		`UPDATE agents SET disabled = true WHERE agent_type = 'qan-postgresql-pgstatements-agent' AND service_id = (SELECT service_id FROM services WHERE service_name = 'pmm-server-postgresql' LIMIT 1);`,
 	},
-	113: {
+	119: {
 		// Reset product tour for new navigation
 		`UPDATE user_flags SET tour_done = false;
 
@@ -1184,6 +1184,12 @@ var databaseSchema = [][]string{
 	118: {
 		`ALTER TABLE dumps ADD COLUMN encrypted boolean NOT NULL DEFAULT false`,
 		`UPDATE dumps SET encrypted = false`,
+	},
+	113: {
+		`ALTER TABLE artifacts
+		ADD COLUMN compression VARCHAR NOT NULL DEFAULT 'default'`,
+
+		`ALTER TABLE artifacts ALTER COLUMN compression DROP DEFAULT`,
 	},
 }
 

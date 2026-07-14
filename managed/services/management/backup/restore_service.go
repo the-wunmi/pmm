@@ -317,6 +317,11 @@ func convertRestoreHistoryItem(
 		return nil, fmt.Errorf("restore history item id '%s': %w", i.ID, err)
 	}
 
+	compression, err := convertBackupCompression(artifact.Compression)
+	if err != nil {
+		return nil, fmt.Errorf("restore history item id '%s': %w", i.ID, err)
+	}
+
 	return &backupv1.RestoreHistoryItem{
 		RestoreId:     i.ID,
 		ArtifactId:    i.ArtifactID,
@@ -331,6 +336,7 @@ func convertRestoreHistoryItem(
 		StartedAt:     startedAt,
 		FinishedAt:    finishedAt,
 		PitrTimestamp: pitrTimestamp,
+		Compression:   compression,
 	}, nil
 }
 

@@ -310,7 +310,6 @@ func mySQLBackupSoftwareInstalledAndCompatible(svm map[models.SoftwareName]strin
 		models.MysqldSoftwareName,
 		models.XtrabackupSoftwareName,
 		models.XbcloudSoftwareName,
-		models.QpressSoftwareName,
 	} {
 		if svm[name] == "" {
 			if name == models.XtrabackupSoftwareName || name == models.XbcloudSoftwareName {

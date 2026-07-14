@@ -33,6 +33,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	agentv1 "github.com/percona/pmm/api/agent/v1"
+	backupv1 "github.com/percona/pmm/api/backup/v1"
 )
 
 const (
@@ -54,10 +55,18 @@ type MySQLRestoreJob struct {
 	name           string
 	locationConfig BackupLocationConfig
 	folder         string
+	compression    backupv1.BackupCompression
 }
 
 // NewMySQLRestoreJob constructs new Job for MySQL backup restore.
-func NewMySQLRestoreJob(id string, timeout time.Duration, name string, locationConfig BackupLocationConfig, folder string) *MySQLRestoreJob {
+func NewMySQLRestoreJob(
+	id string,
+	timeout time.Duration,
+	name string,
+	locationConfig BackupLocationConfig,
+	folder string,
+	compression backupv1.BackupCompression,
+) *MySQLRestoreJob {
 	return &MySQLRestoreJob{
 		id:             id,
 		timeout:        timeout,
@@ -65,6 +74,7 @@ func NewMySQLRestoreJob(id string, timeout time.Duration, name string, locationC
 		name:           name,
 		locationConfig: locationConfig,
 		folder:         folder,
+		compression:    compression,
 	}
 }
 
@@ -137,7 +147,7 @@ func (j *MySQLRestoreJob) Run(ctx context.Context, send Send) error {
 		}
 	}
 
-	err = restoreBackup(ctx, tmpDir, mySQLDirectory)
+	err = restoreBackup(ctx, tmpDir, mySQLDirectory, j.compression)
 	if err != nil {
 		return err
 	}
@@ -174,9 +184,11 @@ func (j *MySQLRestoreJob) binariesInstalled() error {
 		return fmt.Errorf("lookpath=%s: %w", xbstreamBin, err)
 	}
 
-	_, err = exec.LookPath(qpressBin)
-	if err != nil {
-		return fmt.Errorf("lookpath=%s: %w", qpressBin, err)
+	if j.compression == backupv1.BackupCompression_BACKUP_COMPRESSION_QUICKLZ {
+		_, err = exec.LookPath(qpressBin)
+		if err != nil {
+			return fmt.Errorf("lookpath=%s: %w", qpressBin, err)
+		}
 	}
 
 	return nil
@@ -400,19 +412,23 @@ func getPermissions(path string) (os.FileMode, error) {
 	return info.Mode(), nil
 }
 
-func restoreBackup(ctx context.Context, backupDirectory, mySQLDirectory string) error {
+func restoreBackup(ctx context.Context, backupDirectory, mySQLDirectory string, compression backupv1.BackupCompression) error {
 	// TODO We should implement recognizing correct default permissions based on DB configuration.
 	// Setting default value in case the base MySQL folder have been lost.
 	mysqlDirPermissions := os.FileMode(0o750)
 
-	output, err := exec.CommandContext( //nolint:gosec
-		ctx,
-		xtrabackupBin,
-		"--decompress",
-		"--target-dir="+backupDirectory,
-	).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to decompress, output=%s: %w", string(output), err)
+	var output []byte
+	var err error
+	if compression != backupv1.BackupCompression_BACKUP_COMPRESSION_NONE {
+		output, err = exec.CommandContext( //nolint:gosec
+			ctx,
+			xtrabackupBin,
+			"--decompress",
+			"--target-dir="+backupDirectory,
+		).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("failed to decompress, output=%s: %w", string(output), err)
+		}
 	}
 
 	output, err = exec.CommandContext( //nolint:gosec

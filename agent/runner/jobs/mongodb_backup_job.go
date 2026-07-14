@@ -51,6 +51,7 @@ type MongoDBBackupJob struct {
 	dataModel      backuppb.DataModel
 	jobLogger      *pbmJobLogger
 	folder         string
+	compression    backuppb.BackupCompression
 }
 
 // NewMongoDBBackupJob creates new Job for MongoDB backup.
@@ -63,6 +64,7 @@ func NewMongoDBBackupJob(
 	pitr bool,
 	dataModel backuppb.DataModel,
 	folder string,
+	compression backuppb.BackupCompression,
 ) (*MongoDBBackupJob, error) {
 	if dataModel != backuppb.DataModel_DATA_MODEL_PHYSICAL && dataModel != backuppb.DataModel_DATA_MODEL_LOGICAL {
 		return nil, fmt.Errorf("'%s' is not a supported data model for MongoDB backups", dataModel)
@@ -82,6 +84,7 @@ func NewMongoDBBackupJob(
 		dataModel:      dataModel,
 		jobLogger:      newPbmJobLogger(id, pbmBackupJob, dsn),
 		folder:         folder,
+		compression:    compression,
 	}, nil
 }
 
@@ -219,6 +222,26 @@ func (j *MongoDBBackupJob) startBackup(ctx context.Context) (*pbmBackup, error) 
 	case backuppb.DataModel_DATA_MODEL_UNSPECIFIED:
 	default:
 		return nil, fmt.Errorf("'%s' is not a supported data model for backups", j.dataModel)
+	}
+
+	switch j.compression {
+	case backuppb.BackupCompression_BACKUP_COMPRESSION_DEFAULT:
+	case backuppb.BackupCompression_BACKUP_COMPRESSION_GZIP:
+		pbmArgs = append(pbmArgs, "--compression=gzip")
+	case backuppb.BackupCompression_BACKUP_COMPRESSION_SNAPPY:
+		pbmArgs = append(pbmArgs, "--compression=snappy")
+	case backuppb.BackupCompression_BACKUP_COMPRESSION_LZ4:
+		pbmArgs = append(pbmArgs, "--compression=lz4")
+	case backuppb.BackupCompression_BACKUP_COMPRESSION_S2:
+		pbmArgs = append(pbmArgs, "--compression=s2")
+	case backuppb.BackupCompression_BACKUP_COMPRESSION_PGZIP:
+		pbmArgs = append(pbmArgs, "--compression=pgzip")
+	case backuppb.BackupCompression_BACKUP_COMPRESSION_ZSTD:
+		pbmArgs = append(pbmArgs, "--compression=zstd")
+	case backuppb.BackupCompression_BACKUP_COMPRESSION_NONE:
+		pbmArgs = append(pbmArgs, "--compression=none")
+	default:
+		return nil, fmt.Errorf("unknown compression: %s", j.compression)
 	}
 
 	err := execPBMCommand(ctx, j.dsn, &result, pbmArgs...)
