@@ -36,6 +36,7 @@ type jobsService interface {
 		dbConfig *models.DBConfig,
 		locationConfig *models.BackupLocationConfig,
 		folder string,
+		incrementalBaseLSN string,
 	) error
 	StartMySQLRestoreBackupJob(
 		jobID string,
@@ -43,6 +44,7 @@ type jobsService interface {
 		serviceID string,
 		timeout time.Duration,
 		name string,
+		baseNames []string,
 		locationConfig *models.BackupLocationConfig,
 		folder string,
 	) error

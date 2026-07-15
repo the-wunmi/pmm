@@ -38,6 +38,8 @@ type ArtifactFilters struct {
 	Status BackupStatus
 	// Filters by folder.
 	Folder *string
+	// Return only artifacts chained off the specified parent artifact.
+	ParentArtifactID string
 }
 
 // FindArtifacts returns artifact list sorted by creation time in DESCENDING order.
@@ -70,6 +72,12 @@ func FindArtifacts(q *reform.Querier, filters ArtifactFilters) ([]*Artifact, err
 	if filters.Status != "" {
 		conditions = append(conditions, fmt.Sprintf("status = %s", q.Placeholder(idx)))
 		args = append(args, filters.Status)
+		idx++
+	}
+
+	if filters.ParentArtifactID != "" {
+		conditions = append(conditions, fmt.Sprintf("parent_artifact_id = %s", q.Placeholder(idx)))
+		args = append(args, filters.ParentArtifactID)
 		idx++
 	}
 
@@ -187,6 +195,7 @@ type CreateArtifactParams struct {
 	ScheduleID       string
 	IsShardedCluster bool
 	Folder           string
+	ParentArtifactID *string
 }
 
 // Validate validates params used for creating an artifact entry.
@@ -251,6 +260,7 @@ func CreateArtifact(q *reform.Querier, params CreateArtifactParams) (*Artifact, 
 		ScheduleID:       params.ScheduleID,
 		IsShardedCluster: params.IsShardedCluster,
 		Folder:           params.Folder,
+		ParentArtifactID: params.ParentArtifactID,
 	}
 
 	if params.ScheduleID != "" {
@@ -335,6 +345,48 @@ func (s *Artifact) MetadataRemoveFirstN(q *reform.Querier, n uint32) error {
 		return errors.Wrap(err, "failed to remove artifact metadata records")
 	}
 	return nil
+}
+
+// FindArtifactChain returns the restore chain ending at the given artifact, base-first: the full
+// base, then each intermediate incremental, then the artifact itself. A non-incremental artifact
+// yields a single-element chain. Fails on a broken chain (missing parent) or a cycle.
+func FindArtifactChain(q *reform.Querier, artifactID string) ([]*Artifact, error) {
+	var chain []*Artifact
+	seen := make(map[string]struct{})
+	for id := artifactID; id != ""; {
+		if _, ok := seen[id]; ok {
+			return nil, errors.Errorf("cycle detected in artifact chain at id %q", id)
+		}
+		seen[id] = struct{}{}
+
+		artifact, err := FindArtifactByID(q, id)
+		if err != nil {
+			return nil, err
+		}
+		chain = append(chain, artifact)
+
+		if artifact.ParentArtifactID == nil {
+			break
+		}
+		id = *artifact.ParentArtifactID
+	}
+
+	// Reverse into base -> target order.
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain, nil
+}
+
+// LatestXtrabackupToLSN returns the to_lsn recorded by the most recent xtrabackup run for this artifact
+func (s *Artifact) LatestXtrabackupToLSN() string {
+	for i := len(s.MetadataList) - 1; i >= 0; i-- {
+		data := s.MetadataList[i].BackupToolData
+		if data != nil && data.XtrabackupMetadata != nil {
+			return data.XtrabackupMetadata.ToLSN
+		}
+	}
+	return ""
 }
 
 // IsArtifactFinalStatus checks if artifact status is one of the final ones.

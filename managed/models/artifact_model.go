@@ -130,9 +130,18 @@ type PbmMetadata struct {
 	Name string `json:"name"`
 }
 
+// XtrabackupMetadata contains extra data for the xtrabackup cli tool.
+type XtrabackupMetadata struct {
+	// LSN the backup ends at; base LSN for the next incremental backup.
+	ToLSN string `json:"to_lsn"`
+	// LSN the backup starts at; zero for a full backup.
+	FromLSN string `json:"from_lsn"`
+}
+
 // BackupToolData contains extra data for backup tools.
 type BackupToolData struct {
-	PbmMetadata *PbmMetadata
+	PbmMetadata        *PbmMetadata
+	XtrabackupMetadata *XtrabackupMetadata
 }
 
 // Metadata contains extra artifact data like files it consists of, tool specific data, etc.
@@ -165,6 +174,7 @@ type Artifact struct {
 	Mode             BackupMode   `reform:"mode"`
 	Status           BackupStatus `reform:"status"`
 	Type             ArtifactType `reform:"type"`
+	ParentArtifactID *string      `reform:"parent_artifact_id"`
 	ScheduleID       string       `reform:"schedule_id"`
 	CreatedAt        time.Time    `reform:"created_at"`
 	UpdatedAt        time.Time    `reform:"updated_at"`

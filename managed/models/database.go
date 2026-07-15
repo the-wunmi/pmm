@@ -1185,6 +1185,10 @@ var databaseSchema = [][]string{
 		`ALTER TABLE dumps ADD COLUMN encrypted boolean NOT NULL DEFAULT false`,
 		`UPDATE dumps SET encrypted = false`,
 	},
+	119: {
+		`ALTER TABLE artifacts ADD COLUMN parent_artifact_id VARCHAR`,
+		`ALTER TABLE artifacts ADD CONSTRAINT artifacts_parent_artifact_id_fkey FOREIGN KEY (parent_artifact_id) REFERENCES artifacts (id)`,
+	},
 }
 
 // ^^^ Avoid default values in schema definition. ^^^

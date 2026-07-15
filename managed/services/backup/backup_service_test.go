@@ -161,7 +161,7 @@ func TestPerformBackup(t *testing.T) {
 						S3Config:         tc.locationModel.S3Config,
 					}
 					mockedJobsService.On("StartMySQLBackupJob", mock.Anything, pointer.GetString(agent.PMMAgentID), time.Duration(0),
-						mock.Anything, mock.Anything, locationConfig, "artifact_folder").Return(nil).Once()
+						mock.Anything, mock.Anything, locationConfig, "artifact_folder", "").Return(nil).Once()
 				}
 
 				artifactID, err := backupService.PerformBackup(ctx, PerformBackupParams{
@@ -325,7 +325,7 @@ func TestRestoreBackup(t *testing.T) {
 
 				if tc.expectedError == nil {
 					mockedJobsService.On("StartMySQLRestoreBackupJob", mock.Anything, pointer.GetString(agent.PMMAgentID),
-						pointer.GetString(agent.ServiceID), mock.Anything, artifact.Name, mock.Anything, artifactFolder).Return(nil).Once()
+						pointer.GetString(agent.ServiceID), mock.Anything, artifact.Name, mock.Anything, mock.Anything, artifactFolder).Return(nil).Once()
 				}
 				restoreID, err := backupService.RestoreBackup(ctx, pointer.GetString(agent.ServiceID), artifact.ID, time.Unix(0, 0))
 				if tc.expectedError != nil {

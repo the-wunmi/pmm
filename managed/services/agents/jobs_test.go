@@ -65,3 +65,22 @@ func TestArtifactMetadataFromProto(t *testing.T) {
 		assert.Equal(t, expected, actual)
 	})
 }
+
+func TestIncrementalMetadataMatchesBase(t *testing.T) {
+	t.Parallel()
+
+	xtrabackup := func(fromLSN string) *models.Metadata {
+		return &models.Metadata{BackupToolData: &models.BackupToolData{
+			XtrabackupMetadata: &models.XtrabackupMetadata{FromLSN: fromLSN, ToLSN: "9999"},
+		}}
+	}
+
+	assert.True(t, incrementalMetadataMatchesBase(xtrabackup("2543212"), "2543212"))
+	// Agent ran a full backup (from_lsn 0) instead of an incremental against the base.
+	assert.False(t, incrementalMetadataMatchesBase(xtrabackup("0"), "2543212"))
+	// Agent chained off the wrong base.
+	assert.False(t, incrementalMetadataMatchesBase(xtrabackup("111"), "2543212"))
+	// Old agent returned no xtrabackup metadata at all.
+	assert.False(t, incrementalMetadataMatchesBase(&models.Metadata{}, "2543212"))
+	assert.False(t, incrementalMetadataMatchesBase(nil, "2543212"))
+}

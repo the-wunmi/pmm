@@ -687,7 +687,7 @@ func (c *Client) handleStartJobRequest(p *agentv1.StartJobRequest) error {
 			Port:     int(j.MysqlBackup.Port),
 			Socket:   j.MysqlBackup.Socket,
 		}
-		job = jobs.NewMySQLBackupJob(p.JobId, timeout, j.MysqlBackup.Name, dbConnCfg, locationConfig, j.MysqlBackup.Folder)
+		job = jobs.NewMySQLBackupJob(p.JobId, timeout, j.MysqlBackup.Name, dbConnCfg, locationConfig, j.MysqlBackup.Folder, j.MysqlBackup.IncrementalBaseLsn)
 
 	case *agentv1.StartJobRequest_MysqlRestoreBackup:
 		var locationConfig jobs.BackupLocationConfig
@@ -705,7 +705,7 @@ func (c *Client) handleStartJobRequest(p *agentv1.StartJobRequest) error {
 			return errors.Errorf("unknown location config: %T", j.MysqlRestoreBackup.LocationConfig)
 		}
 
-		job = jobs.NewMySQLRestoreJob(p.JobId, timeout, j.MysqlRestoreBackup.Name, locationConfig, j.MysqlRestoreBackup.Folder)
+		job = jobs.NewMySQLRestoreJob(p.JobId, timeout, j.MysqlRestoreBackup.Name, j.MysqlRestoreBackup.BaseNames, locationConfig, j.MysqlRestoreBackup.Folder)
 
 	case *agentv1.StartJobRequest_MongodbBackup:
 		var locationConfig jobs.BackupLocationConfig

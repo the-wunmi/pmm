@@ -226,6 +226,61 @@ func (x *PbmMetadata) GetName() string {
 	return ""
 }
 
+// XtrabackupMetadata contains extra data for the xtrabackup backup tool.
+type XtrabackupMetadata struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// LSN the backup ends at (xtrabackup_checkpoints:to_lsn); base LSN for the next incremental backup.
+	ToLsn string `protobuf:"bytes,1,opt,name=to_lsn,json=toLsn,proto3" json:"to_lsn,omitempty"`
+	// LSN the backup starts at (xtrabackup_checkpoints:from_lsn); zero for a full backup.
+	FromLsn       string `protobuf:"bytes,2,opt,name=from_lsn,json=fromLsn,proto3" json:"from_lsn,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *XtrabackupMetadata) Reset() {
+	*x = XtrabackupMetadata{}
+	mi := &file_backup_v1_common_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *XtrabackupMetadata) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*XtrabackupMetadata) ProtoMessage() {}
+
+func (x *XtrabackupMetadata) ProtoReflect() protoreflect.Message {
+	mi := &file_backup_v1_common_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use XtrabackupMetadata.ProtoReflect.Descriptor instead.
+func (*XtrabackupMetadata) Descriptor() ([]byte, []int) {
+	return file_backup_v1_common_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *XtrabackupMetadata) GetToLsn() string {
+	if x != nil {
+		return x.ToLsn
+	}
+	return ""
+}
+
+func (x *XtrabackupMetadata) GetFromLsn() string {
+	if x != nil {
+		return x.FromLsn
+	}
+	return ""
+}
+
 // Metadata contains extra artifact data like files it consists of, tool specific data, etc.
 type Metadata struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -238,6 +293,7 @@ type Metadata struct {
 	// Types that are valid to be assigned to BackupToolMetadata:
 	//
 	//	*Metadata_PbmMetadata
+	//	*Metadata_XtrabackupMetadata
 	BackupToolMetadata isMetadata_BackupToolMetadata `protobuf_oneof:"backup_tool_metadata"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
@@ -245,7 +301,7 @@ type Metadata struct {
 
 func (x *Metadata) Reset() {
 	*x = Metadata{}
-	mi := &file_backup_v1_common_proto_msgTypes[2]
+	mi := &file_backup_v1_common_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -257,7 +313,7 @@ func (x *Metadata) String() string {
 func (*Metadata) ProtoMessage() {}
 
 func (x *Metadata) ProtoReflect() protoreflect.Message {
-	mi := &file_backup_v1_common_proto_msgTypes[2]
+	mi := &file_backup_v1_common_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -270,7 +326,7 @@ func (x *Metadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Metadata.ProtoReflect.Descriptor instead.
 func (*Metadata) Descriptor() ([]byte, []int) {
-	return file_backup_v1_common_proto_rawDescGZIP(), []int{2}
+	return file_backup_v1_common_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Metadata) GetFileList() []*File {
@@ -303,6 +359,15 @@ func (x *Metadata) GetPbmMetadata() *PbmMetadata {
 	return nil
 }
 
+func (x *Metadata) GetXtrabackupMetadata() *XtrabackupMetadata {
+	if x != nil {
+		if x, ok := x.BackupToolMetadata.(*Metadata_XtrabackupMetadata); ok {
+			return x.XtrabackupMetadata
+		}
+	}
+	return nil
+}
+
 type isMetadata_BackupToolMetadata interface {
 	isMetadata_BackupToolMetadata()
 }
@@ -311,7 +376,13 @@ type Metadata_PbmMetadata struct {
 	PbmMetadata *PbmMetadata `protobuf:"bytes,3,opt,name=pbm_metadata,json=pbmMetadata,proto3,oneof"`
 }
 
+type Metadata_XtrabackupMetadata struct {
+	XtrabackupMetadata *XtrabackupMetadata `protobuf:"bytes,4,opt,name=xtrabackup_metadata,json=xtrabackupMetadata,proto3,oneof"`
+}
+
 func (*Metadata_PbmMetadata) isMetadata_BackupToolMetadata() {}
+
+func (*Metadata_XtrabackupMetadata) isMetadata_BackupToolMetadata() {}
 
 // LogChunk represent one chunk of logs.
 type LogChunk struct {
@@ -324,7 +395,7 @@ type LogChunk struct {
 
 func (x *LogChunk) Reset() {
 	*x = LogChunk{}
-	mi := &file_backup_v1_common_proto_msgTypes[3]
+	mi := &file_backup_v1_common_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -336,7 +407,7 @@ func (x *LogChunk) String() string {
 func (*LogChunk) ProtoMessage() {}
 
 func (x *LogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_backup_v1_common_proto_msgTypes[3]
+	mi := &file_backup_v1_common_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -349,7 +420,7 @@ func (x *LogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogChunk.ProtoReflect.Descriptor instead.
 func (*LogChunk) Descriptor() ([]byte, []int) {
-	return file_backup_v1_common_proto_rawDescGZIP(), []int{3}
+	return file_backup_v1_common_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *LogChunk) GetChunkId() uint32 {
@@ -375,12 +446,16 @@ const file_backup_v1_common_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tB\a\xfaB\x04r\x02\x10\x01R\x04name\x12!\n" +
 	"\fis_directory\x18\x02 \x01(\bR\visDirectory\"!\n" +
 	"\vPbmMetadata\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\xc8\x01\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"F\n" +
+	"\x12XtrabackupMetadata\x12\x15\n" +
+	"\x06to_lsn\x18\x01 \x01(\tR\x05toLsn\x12\x19\n" +
+	"\bfrom_lsn\x18\x02 \x01(\tR\afromLsn\"\x9a\x02\n" +
 	"\bMetadata\x12,\n" +
 	"\tfile_list\x18\x01 \x03(\v2\x0f.backup.v1.FileR\bfileList\x129\n" +
 	"\n" +
 	"restore_to\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\trestoreTo\x12;\n" +
-	"\fpbm_metadata\x18\x03 \x01(\v2\x16.backup.v1.PbmMetadataH\x00R\vpbmMetadataB\x16\n" +
+	"\fpbm_metadata\x18\x03 \x01(\v2\x16.backup.v1.PbmMetadataH\x00R\vpbmMetadata\x12P\n" +
+	"\x13xtrabackup_metadata\x18\x04 \x01(\v2\x1d.backup.v1.XtrabackupMetadataH\x00R\x12xtrabackupMetadataB\x16\n" +
 	"\x14backup_tool_metadata\"9\n" +
 	"\bLogChunk\x12\x19\n" +
 	"\bchunk_id\x18\x01 \x01(\rR\achunkId\x12\x12\n" +
@@ -412,27 +487,28 @@ func file_backup_v1_common_proto_rawDescGZIP() []byte {
 
 var (
 	file_backup_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-	file_backup_v1_common_proto_msgTypes  = make([]protoimpl.MessageInfo, 4)
+	file_backup_v1_common_proto_msgTypes  = make([]protoimpl.MessageInfo, 5)
 	file_backup_v1_common_proto_goTypes   = []any{
 		DataModel(0),                  // 0: backup.v1.DataModel
 		BackupMode(0),                 // 1: backup.v1.BackupMode
 		(*File)(nil),                  // 2: backup.v1.File
 		(*PbmMetadata)(nil),           // 3: backup.v1.PbmMetadata
-		(*Metadata)(nil),              // 4: backup.v1.Metadata
-		(*LogChunk)(nil),              // 5: backup.v1.LogChunk
-		(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
+		(*XtrabackupMetadata)(nil),    // 4: backup.v1.XtrabackupMetadata
+		(*Metadata)(nil),              // 5: backup.v1.Metadata
+		(*LogChunk)(nil),              // 6: backup.v1.LogChunk
+		(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
 	}
 )
-
 var file_backup_v1_common_proto_depIdxs = []int32{
 	2, // 0: backup.v1.Metadata.file_list:type_name -> backup.v1.File
-	6, // 1: backup.v1.Metadata.restore_to:type_name -> google.protobuf.Timestamp
+	7, // 1: backup.v1.Metadata.restore_to:type_name -> google.protobuf.Timestamp
 	3, // 2: backup.v1.Metadata.pbm_metadata:type_name -> backup.v1.PbmMetadata
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	4, // 3: backup.v1.Metadata.xtrabackup_metadata:type_name -> backup.v1.XtrabackupMetadata
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_backup_v1_common_proto_init() }
@@ -440,8 +516,9 @@ func file_backup_v1_common_proto_init() {
 	if File_backup_v1_common_proto != nil {
 		return
 	}
-	file_backup_v1_common_proto_msgTypes[2].OneofWrappers = []any{
+	file_backup_v1_common_proto_msgTypes[3].OneofWrappers = []any{
 		(*Metadata_PbmMetadata)(nil),
+		(*Metadata_XtrabackupMetadata)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -449,7 +526,7 @@ func file_backup_v1_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_backup_v1_common_proto_rawDesc), len(file_backup_v1_common_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

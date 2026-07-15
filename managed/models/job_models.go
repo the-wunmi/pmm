@@ -63,8 +63,9 @@ func (r *JobResult) Scan(src any) error { return jsonScan(r, src) }
 
 // MySQLBackupJobData stores MySQL job specific result data.
 type MySQLBackupJobData struct {
-	ServiceID  string `json:"service_id"`
-	ArtifactID string `json:"artifact_id"`
+	ServiceID          string `json:"service_id"`
+	ArtifactID         string `json:"artifact_id"`
+	IncrementalBaseLSN string `json:"incremental_base_lsn,omitempty"`
 }
 
 // MySQLRestoreBackupJobData stores MySQL restore backup job specific result data.

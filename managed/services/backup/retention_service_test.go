@@ -243,3 +243,71 @@ func TestEnsureRetention(t *testing.T) {
 
 	mockedRemovalService.AssertExpectations(t)
 }
+
+func TestDeletableArtifacts(t *testing.T) {
+	t.Parallel()
+
+	ptr := func(s string) *string { return &s }
+	artifact := func(id string, parent *string) *models.Artifact {
+		return &models.Artifact{ID: id, ParentArtifactID: parent}
+	}
+	ids := func(artifacts []*models.Artifact) []string {
+		res := make([]string, 0, len(artifacts))
+		for _, a := range artifacts {
+			res = append(res, a.ID)
+		}
+		return res
+	}
+
+	t.Run("plain snapshots (no chains) are all deletable", func(t *testing.T) {
+		t.Parallel()
+		all := []*models.Artifact{artifact("s3", nil), artifact("s2", nil), artifact("s1", nil)}
+		candidates := []*models.Artifact{artifact("s1", nil)}
+		assert.Equal(t, []string{"s1"}, ids(deletableArtifacts(candidates, all)))
+	})
+
+	t.Run("base with a surviving child is kept", func(t *testing.T) {
+		t.Parallel()
+		// full <- inc1 (inc1 survives, full is a delete candidate).
+		full := artifact("full", nil)
+		inc1 := artifact("inc1", ptr("full"))
+		all := []*models.Artifact{inc1, full}
+		candidates := []*models.Artifact{full}
+		assert.Empty(t, deletableArtifacts(candidates, all))
+	})
+
+	t.Run("whole superseded chain is deletable, children first", func(t *testing.T) {
+		t.Parallel()
+		// full <- inc1 <- inc2, all beyond retention. candidates newest-first.
+		full := artifact("full", nil)
+		inc1 := artifact("inc1", ptr("full"))
+		inc2 := artifact("inc2", ptr("inc1"))
+		all := []*models.Artifact{inc2, inc1, full}
+		candidates := []*models.Artifact{inc2, inc1, full}
+		// Order must be children-before-parents to respect the FK on deletion.
+		assert.Equal(t, []string{"inc2", "inc1", "full"}, ids(deletableArtifacts(candidates, all)))
+	})
+
+	t.Run("partial chain: base kept because a mid increment survives", func(t *testing.T) {
+		t.Parallel()
+		// full <- inc1 <- inc2. Only full and inc1 are candidates; inc2 (newest) is kept, so
+		// neither full nor inc1 may be deleted.
+		full := artifact("full", nil)
+		inc1 := artifact("inc1", ptr("full"))
+		inc2 := artifact("inc2", ptr("inc1"))
+		all := []*models.Artifact{inc2, inc1, full}
+		candidates := []*models.Artifact{inc1, full}
+		assert.Empty(t, deletableArtifacts(candidates, all))
+	})
+
+	t.Run("child in another schedule pins the base", func(t *testing.T) {
+		t.Parallel()
+		// full (snapshot schedule) is a candidate, but an incremental from another schedule
+		// chains off it and is not being deleted.
+		full := artifact("full", nil)
+		incOtherSchedule := artifact("inc-other", ptr("full"))
+		all := []*models.Artifact{incOtherSchedule, full}
+		candidates := []*models.Artifact{full}
+		assert.Empty(t, deletableArtifacts(candidates, all))
+	})
+}

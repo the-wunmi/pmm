@@ -82,7 +82,7 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 	var dbConfig *models.DBConfig
 
 	name := params.Name
-	if params.Mode == models.Snapshot {
+	if params.Mode == models.Snapshot || params.Mode == models.Incremental {
 		name = name + "_" + time.Now().Format(time.RFC3339)
 	}
 
@@ -91,6 +91,11 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 	for i := 1; ; i++ {
 		errTX = s.db.InTransactionContext(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}, func(tx *reform.TX) error {
 			var err error
+
+			var parentArtifactID *string
+			var incrementalBaseLSN string
+			// Effective mode; may be downgraded to Snapshot below. Local so serializable retries re-evaluate it.
+			mode := params.Mode
 
 			if err = services.CheckArtifactOverlapping(tx.Querier, params.ServiceID, params.LocationID, params.Folder); err != nil {
 				return err
@@ -119,8 +124,29 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 					return errors.WithMessage(ErrIncompatibleLocationType, "the only supported location type for mySQL is S3")
 				}
 
-				if params.Mode != models.Snapshot {
-					return errors.New("the only supported backup mode for mySQL is snapshot")
+				switch mode {
+				case models.Snapshot:
+				case models.Incremental:
+					base, err := latestSuccessfulArtifact(tx.Querier, params.ServiceID, params.LocationID, params.Folder)
+					if err != nil {
+						return err
+					}
+					// A restore after the base resets the datadir's LSN and breaks the chain; take a full backup instead.
+					restored, err := restoredSince(tx.Querier, params.ServiceID, base.CreatedAt)
+					if err != nil {
+						return err
+					}
+					if restored {
+						mode = models.Snapshot
+						break
+					}
+					incrementalBaseLSN = base.LatestXtrabackupToLSN()
+					if incrementalBaseLSN == "" {
+						return errors.Errorf("base backup %q has no recorded LSN and cannot be used as an incremental base; take a full backup first", base.Name)
+					}
+					parentArtifactID = &base.ID
+				default:
+					return errors.Errorf("unsupported backup mode for mySQL: %s", mode)
 				}
 			case models.MongoDBServiceType:
 				jobType = models.MongoDBBackupJob
@@ -157,16 +183,17 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 
 			if artifact == nil {
 				if artifact, err = models.CreateArtifact(tx.Querier, models.CreateArtifactParams{
-					Name:       name,
-					Vendor:     string(svc.ServiceType),
-					DBVersion:  dbVersion,
-					LocationID: locationModel.ID,
-					ServiceID:  svc.ServiceID,
-					DataModel:  params.DataModel,
-					Mode:       params.Mode,
-					Status:     models.PendingBackupStatus,
-					ScheduleID: params.ScheduleID,
-					Folder:     params.Folder,
+					Name:             name,
+					Vendor:           string(svc.ServiceType),
+					DBVersion:        dbVersion,
+					LocationID:       locationModel.ID,
+					ServiceID:        svc.ServiceID,
+					DataModel:        params.DataModel,
+					Mode:             mode,
+					Status:           models.PendingBackupStatus,
+					ScheduleID:       params.ScheduleID,
+					Folder:           params.Folder,
+					ParentArtifactID: parentArtifactID,
 				}); err != nil {
 					return err
 				}
@@ -181,8 +208,8 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 			//nolint:noinlineerr
 			if job, dbConfig, err = s.prepareBackupJob(
 				tx.Querier, svc, artifact.ID,
-				jobType, params.Mode, params.DataModel, params.Retries,
-				params.RetryInterval,
+				jobType, mode, params.DataModel, params.Retries,
+				params.RetryInterval, incrementalBaseLSN,
 			); err != nil {
 				return err
 			}
@@ -219,7 +246,8 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 
 	switch svc.ServiceType {
 	case models.MySQLServiceType:
-		err = s.jobsService.StartMySQLBackupJob(job.ID, job.PMMAgentID, 0, name, dbConfig, locationConfig, params.Folder)
+		err = s.jobsService.StartMySQLBackupJob(job.ID, job.PMMAgentID, 0, name, dbConfig, locationConfig, params.Folder,
+			job.Data.MySQLBackup.IncrementalBaseLSN)
 	case models.MongoDBServiceType:
 		err = s.jobsService.StartMongoDBBackupJob(svc, job.ID, job.PMMAgentID, 0, name,
 			job.Data.MongoDBBackup.Mode, job.Data.MongoDBBackup.DataModel, locationConfig, params.Folder)
@@ -254,6 +282,7 @@ type restoreJobParams struct {
 	Service       *models.Service
 	AgentID       string
 	ArtifactName  string
+	BaseNames     []string
 	pbmBackupName string
 	LocationModel *models.BackupLocation
 	DBConfig      *models.DBConfig
@@ -321,6 +350,7 @@ func (s *Service) RestoreBackup(ctx context.Context, serviceID, artifactID strin
 
 		restoreID = restore.ID
 
+		var baseNames []string
 		var jobType models.JobType
 		var jobData *models.JobData
 		switch service.ServiceType {
@@ -330,6 +360,11 @@ func (s *Service) RestoreBackup(ctx context.Context, serviceID, artifactID strin
 				MySQLRestoreBackup: &models.MySQLRestoreBackupJobData{
 					RestoreID: restoreID,
 				},
+			}
+
+			baseNames, err = restoreChainBaseNames(tx.Querier, artifactID)
+			if err != nil {
+				return err
 			}
 		case models.MongoDBServiceType:
 			jobType = models.MongoDBRestoreBackupJob
@@ -370,6 +405,7 @@ func (s *Service) RestoreBackup(ctx context.Context, serviceID, artifactID strin
 			Service:       service,
 			AgentID:       agentID,
 			ArtifactName:  artifact.Name,
+			BaseNames:     baseNames,
 			LocationModel: location,
 			DBConfig:      dbConfig,
 			DataModel:     artifact.DataModel,
@@ -456,6 +492,7 @@ func (s *Service) startRestoreJob(params *restoreJobParams) error {
 			params.Service.ServiceID, // TODO: It seems that this parameter is redundant
 			0,
 			params.ArtifactName,
+			params.BaseNames,
 			locationConfig,
 			params.Folder,
 		)
@@ -482,6 +519,59 @@ func (s *Service) startRestoreJob(params *restoreJobParams) error {
 	}
 }
 
+// restoreChainBaseNames returns the base-first chain of artifact names to apply before the target on restore.
+func restoreChainBaseNames(q *reform.Querier, artifactID string) ([]string, error) {
+	chain, err := models.FindArtifactChain(q, artifactID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Every base but the target must be successful, else its files may be gone.
+	baseNames := make([]string, 0, len(chain)-1)
+	for _, artifact := range chain[:len(chain)-1] {
+		if artifact.Status != models.SuccessBackupStatus {
+			return nil, errors.Wrapf(ErrArtifactNotReady, "base backup %q of the restore chain is in status %q", artifact.Name, artifact.Status)
+		}
+		baseNames = append(baseNames, artifact.Name)
+	}
+	return baseNames, nil
+}
+
+// latestSuccessfulArtifact returns the most recent successful artifact for the given service, location and folder.
+func latestSuccessfulArtifact(q *reform.Querier, serviceID, locationID, folder string) (*models.Artifact, error) {
+	artifacts, err := models.FindArtifacts(q, models.ArtifactFilters{
+		ServiceID:  serviceID,
+		LocationID: locationID,
+		Status:     models.SuccessBackupStatus,
+		Folder:     &folder,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(artifacts) == 0 {
+		return nil, errors.New("no successful backup found to base an incremental backup on; take a full backup first")
+	}
+	// FindArtifacts returns artifacts sorted by creation time in descending order.
+	return artifacts[0], nil
+}
+
+// restoredSince reports whether a successful restore for the service finished after ts.
+func restoredSince(q *reform.Querier, serviceID string, ts time.Time) (bool, error) {
+	restores, err := models.FindRestoreHistoryItems(q, models.RestoreHistoryItemFilters{
+		ServiceID: serviceID,
+		Status:    models.SuccessRestoreStatus.Pointer(),
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, r := range restores {
+		if r.FinishedAt != nil && r.FinishedAt.After(ts) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Service) prepareBackupJob(
 	q *reform.Querier,
 	service *models.Service,
@@ -491,6 +581,7 @@ func (s *Service) prepareBackupJob(
 	dataModel models.DataModel,
 	retries uint32,
 	retryInterval time.Duration,
+	incrementalBaseLSN string,
 ) (*models.Job, *models.DBConfig, error) {
 	dbConfig, err := models.FindDBConfigForService(q, service.ServiceID)
 	if err != nil {
@@ -511,8 +602,9 @@ func (s *Service) prepareBackupJob(
 	case models.MySQLBackupJob:
 		jobData = &models.JobData{
 			MySQLBackup: &models.MySQLBackupJobData{
-				ServiceID:  service.ServiceID,
-				ArtifactID: artifactID,
+				ServiceID:          service.ServiceID,
+				ArtifactID:         artifactID,
+				IncrementalBaseLSN: incrementalBaseLSN,
 			},
 		}
 	case models.MongoDBBackupJob:

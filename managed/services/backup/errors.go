@@ -48,4 +48,6 @@ var (
 	ErrArtifactNotReady = errors.New("artifact not in success status")
 	// ErrIncorrectArtifactStatus is returned when artifact status doesn't fit to proceed with action.
 	ErrIncorrectArtifactStatus = errors.New("incorrect artifact status")
+	// ErrArtifactHasChildren is returned when an artifact can't be deleted because incremental backups are chained off it.
+	ErrArtifactHasChildren = errors.New("artifact has dependent incremental backups")
 )

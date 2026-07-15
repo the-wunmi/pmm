@@ -214,6 +214,16 @@ func (s *RemovalService) lockArtifact(artifactID string, lockingStatus models.Ba
 				"artifact is used by currently running restore operation.", artifact.ID)
 		}
 
+		if lockingStatus == models.DeletingBackupStatus {
+			children, err := models.FindArtifacts(tx.Querier, models.ArtifactFilters{ParentArtifactID: artifact.ID})
+			if err != nil {
+				return err
+			}
+			if len(children) > 0 {
+				return errors.Wrapf(ErrArtifactHasChildren, "cannot delete artifact %q: %d incremental backup(s) are based on it", artifact.ID, len(children))
+			}
+		}
+
 		_, err = models.UpdateArtifact(tx.Querier, artifact.ID, models.UpdateArtifactParams{
 			Status: lockingStatus.Pointer(),
 		})

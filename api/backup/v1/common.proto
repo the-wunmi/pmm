@@ -32,6 +32,14 @@ message PbmMetadata {
   string name = 1;
 }
 
+// XtrabackupMetadata contains extra data for the xtrabackup backup tool.
+message XtrabackupMetadata {
+  // LSN the backup ends at (xtrabackup_checkpoints:to_lsn); base LSN for the next incremental backup.
+  string to_lsn = 1;
+  // LSN the backup starts at (xtrabackup_checkpoints:from_lsn); zero for a full backup.
+  string from_lsn = 2;
+}
+
 // Metadata contains extra artifact data like files it consists of, tool specific data, etc.
 message Metadata {
   // List of files backup consists of.
@@ -41,6 +49,7 @@ message Metadata {
   // Extra data for backup tools.
   oneof backup_tool_metadata {
     PbmMetadata pbm_metadata = 3;
+    XtrabackupMetadata xtrabackup_metadata = 4;
   }
 }
 

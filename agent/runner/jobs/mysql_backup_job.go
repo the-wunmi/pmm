@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -46,10 +47,18 @@ type MySQLBackupJob struct {
 	connConf       DBConnConfig
 	locationConfig BackupLocationConfig
 	folder         string
+	baseLSN        string
 }
 
 // NewMySQLBackupJob constructs new Job for MySQL backup.
-func NewMySQLBackupJob(id string, timeout time.Duration, name string, connConf DBConnConfig, locationConfig BackupLocationConfig, folder string) *MySQLBackupJob {
+func NewMySQLBackupJob(
+	id string,
+	timeout time.Duration,
+	name string,
+	connConf DBConnConfig,
+	locationConfig BackupLocationConfig,
+	folder, baseLSN string,
+) *MySQLBackupJob {
 	return &MySQLBackupJob{
 		id:             id,
 		timeout:        timeout,
@@ -58,6 +67,7 @@ func NewMySQLBackupJob(id string, timeout time.Duration, name string, connConf D
 		connConf:       connConf,
 		locationConfig: locationConfig,
 		folder:         folder,
+		baseLSN:        baseLSN,
 	}
 }
 
@@ -88,7 +98,7 @@ func (j *MySQLBackupJob) Run(ctx context.Context, send Send) error {
 		return errors.WithStack(err)
 	}
 
-	err = j.backup(ctx)
+	xtrabackupMetadata, err := j.backup(ctx)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -108,12 +118,43 @@ func (j *MySQLBackupJob) Run(ctx context.Context, send Send) error {
 			MysqlBackup: &agentv1.JobResult_MySQLBackup{
 				Metadata: &backuppb.Metadata{
 					FileList: mysqlArtifactFiles(j.name),
+					BackupToolMetadata: &backuppb.Metadata_XtrabackupMetadata{
+						XtrabackupMetadata: xtrabackupMetadata,
+					},
 				},
 			},
 		},
 	})
 
 	return nil
+}
+
+// readXtrabackupCheckpoints parses the xtrabackup_checkpoints file written via --extra-lsndir and returns the recorded LSN range.
+func readXtrabackupCheckpoints(dir string) (*backuppb.XtrabackupMetadata, error) {
+	content, err := os.ReadFile(path.Join(dir, "xtrabackup_checkpoints")) //nolint:gosec // path is an agent-controlled tempdir
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to read xtrabackup_checkpoints")
+	}
+
+	metadata := &backuppb.XtrabackupMetadata{}
+	for _, line := range strings.Split(string(content), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "to_lsn":
+			metadata.ToLsn = strings.TrimSpace(value)
+		case "from_lsn":
+			metadata.FromLsn = strings.TrimSpace(value)
+		}
+	}
+
+	if metadata.ToLsn == "" {
+		return nil, errors.New("to_lsn not found in xtrabackup_checkpoints")
+	}
+
+	return metadata, nil
 }
 
 func (j *MySQLBackupJob) binariesInstalled() error {
@@ -137,7 +178,27 @@ func (j *MySQLBackupJob) binariesInstalled() error {
 	return nil
 }
 
-func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
+// backup streams the xtrabackup to cloud and returns the LSN range it recorded.
+func (j *MySQLBackupJob) backup(ctx context.Context) (*backuppb.XtrabackupMetadata, error) {
+	// --extra-lsndir writes xtrabackup_checkpoints (to_lsn/from_lsn) here even while streaming to cloud.
+	lsnDir, err := os.MkdirTemp("", "mysql-backup-lsn")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create LSN tempdir")
+	}
+	defer func() {
+		if err := os.RemoveAll(lsnDir); err != nil {
+			j.l.WithError(err).Warn("failed to remove LSN temporary directory")
+		}
+	}()
+
+	if err := j.streamBackup(ctx, lsnDir); err != nil {
+		return nil, errors.WithStack(err)
+	}
+
+	return readXtrabackupCheckpoints(lsnDir)
+}
+
+func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr error) {
 	pipeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -159,7 +220,12 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 		"--backup",
 		// Target dir is created, even though it's empty, because we are streaming it to cloud.
 		// https://jira.percona.com/browse/PXB-2602
-		"--target-dir="+tmpDir) // #nosec G204
+		"--target-dir="+tmpDir,
+		"--extra-lsndir="+lsnDir) // #nosec G204
+
+	if j.baseLSN != "" {
+		xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--incremental-lsn="+j.baseLSN)
+	}
 
 	if j.connConf.User != "" {
 		xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--user="+j.connConf.User)
