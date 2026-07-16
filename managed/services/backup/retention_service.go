@@ -74,7 +74,7 @@ func (s *RetentionService) EnforceRetention(scheduleID string) error {
 	storage := GetStorageForLocation(location)
 
 	switch mode {
-	case models.Snapshot:
+	case models.Snapshot, models.Incremental:
 		err = s.retentionSnapshot(storage, scheduleID, retention)
 	case models.PITR:
 		err = s.retentionPITR(storage, scheduleID, retention)
@@ -99,9 +99,29 @@ func (s *RetentionService) retentionSnapshot(storage Storage, scheduleID string,
 		return nil
 	}
 
-	for _, artifact := range artifacts[retention:] {
+	candidates := artifacts[retention:]
+	failed, err := models.FindArtifacts(s.db.Querier, models.ArtifactFilters{
+		ScheduleID: scheduleID,
+		Status:     models.ErrorBackupStatus,
+	})
+	if err != nil {
+		return err
+	}
+	oldestKept := artifacts[retention-1].CreatedAt
+	for _, a := range failed {
+		if a.CreatedAt.Before(oldestKept) {
+			candidates = append(candidates, a)
+		}
+	}
+
+	for _, artifact := range candidates {
 		err := s.removalSVC.DeleteArtifact(storage, artifact.ID, true)
-		if err != nil {
+		switch {
+		case err == nil:
+		case errors.Is(err, ErrArtifactHasChildren):
+			// A base still has a dependent incremental; defer to a later run once its children go.
+			s.l.Debugf("Deferring deletion of artifact %q: %v", artifact.ID, err)
+		default:
 			return err
 		}
 	}

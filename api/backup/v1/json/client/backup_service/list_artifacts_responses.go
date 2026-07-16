@@ -812,7 +812,7 @@ func (o *ListArtifactsOKBodyArtifactsItems0) validateMetadataList(formats strfmt
 	return nil
 }
 
-var listArtifactsOkBodyArtifactsItems0TypeCompressionPropEnum []interface{}
+var listArtifactsOkBodyArtifactsItems0TypeCompressionPropEnum []any
 
 func init() {
 	var res []string
@@ -950,6 +950,9 @@ type ListArtifactsOKBodyArtifactsItems0MetadataListItems0 struct {
 
 	// pbm metadata
 	PbmMetadata *ListArtifactsOKBodyArtifactsItems0MetadataListItems0PbmMetadata `json:"pbm_metadata,omitempty"`
+
+	// xtrabackup metadata
+	XtrabackupMetadata *ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata `json:"xtrabackup_metadata,omitempty"`
 }
 
 // Validate validates this list artifacts OK body artifacts items0 metadata list items0
@@ -965,6 +968,10 @@ func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0) Validate(formats 
 	}
 
 	if err := o.validatePbmMetadata(formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := o.validateXtrabackupMetadata(formats); err != nil {
 		res = append(res, err)
 	}
 
@@ -1039,6 +1046,29 @@ func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0) validatePbmMetada
 	return nil
 }
 
+func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0) validateXtrabackupMetadata(formats strfmt.Registry) error {
+	if swag.IsZero(o.XtrabackupMetadata) { // not required
+		return nil
+	}
+
+	if o.XtrabackupMetadata != nil {
+		if err := o.XtrabackupMetadata.Validate(formats); err != nil {
+			ve := new(errors.Validation)
+			if stderrors.As(err, &ve) {
+				return ve.ValidateName("xtrabackup_metadata")
+			}
+			ce := new(errors.CompositeError)
+			if stderrors.As(err, &ce) {
+				return ce.ValidateName("xtrabackup_metadata")
+			}
+
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ContextValidate validate this list artifacts OK body artifacts items0 metadata list items0 based on the context it is used
 func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
 	var res []error
@@ -1048,6 +1078,10 @@ func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0) ContextValidate(c
 	}
 
 	if err := o.contextValidatePbmMetadata(ctx, formats); err != nil {
+		res = append(res, err)
+	}
+
+	if err := o.contextValidateXtrabackupMetadata(ctx, formats); err != nil {
 		res = append(res, err)
 	}
 
@@ -1098,6 +1132,30 @@ func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0) contextValidatePb
 			ce := new(errors.CompositeError)
 			if stderrors.As(err, &ce) {
 				return ce.ValidateName("pbm_metadata")
+			}
+
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0) contextValidateXtrabackupMetadata(ctx context.Context, formats strfmt.Registry) error {
+	if o.XtrabackupMetadata != nil {
+
+		if swag.IsZero(o.XtrabackupMetadata) { // not required
+			return nil
+		}
+
+		if err := o.XtrabackupMetadata.ContextValidate(ctx, formats); err != nil {
+			ve := new(errors.Validation)
+			if stderrors.As(err, &ve) {
+				return ve.ValidateName("xtrabackup_metadata")
+			}
+			ce := new(errors.CompositeError)
+			if stderrors.As(err, &ce) {
+				return ce.ValidateName("xtrabackup_metadata")
 			}
 
 			return err
@@ -1195,6 +1253,46 @@ func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0PbmMetadata) Marsha
 // UnmarshalBinary interface implementation
 func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0PbmMetadata) UnmarshalBinary(b []byte) error {
 	var res ListArtifactsOKBodyArtifactsItems0MetadataListItems0PbmMetadata
+	if err := swag.ReadJSON(b, &res); err != nil {
+		return err
+	}
+	*o = res
+	return nil
+}
+
+/*
+ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata XtrabackupMetadata contains extra data for the xtrabackup backup tool.
+swagger:model ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata
+*/
+type ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata struct {
+	// LSN the backup ends at (xtrabackup_checkpoints:to_lsn); base LSN for the next incremental backup.
+	ToLsn string `json:"to_lsn,omitempty"`
+
+	// LSN the backup starts at (xtrabackup_checkpoints:from_lsn); zero for a full backup.
+	FromLsn string `json:"from_lsn,omitempty"`
+}
+
+// Validate validates this list artifacts OK body artifacts items0 metadata list items0 xtrabackup metadata
+func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata) Validate(formats strfmt.Registry) error {
+	return nil
+}
+
+// ContextValidate validates this list artifacts OK body artifacts items0 metadata list items0 xtrabackup metadata based on context it is used
+func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
+	return nil
+}
+
+// MarshalBinary interface implementation
+func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata) MarshalBinary() ([]byte, error) {
+	if o == nil {
+		return nil, nil
+	}
+	return swag.WriteJSON(o)
+}
+
+// UnmarshalBinary interface implementation
+func (o *ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata) UnmarshalBinary(b []byte) error {
+	var res ListArtifactsOKBodyArtifactsItems0MetadataListItems0XtrabackupMetadata
 	if err := swag.ReadJSON(b, &res); err != nil {
 		return err
 	}

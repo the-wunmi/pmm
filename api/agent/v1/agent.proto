@@ -539,6 +539,8 @@ message StartJobRequest {
     string folder = 7;
     // Compression
     backup.v1.BackupCompression compression = 8;
+    // Base LSN for an incremental backup (xtrabackup --incremental-lsn). Empty for a full backup.
+    string incremental_base_lsn = 9;
     // Backup target location.
     oneof location_config {
       S3LocationConfig s3_config = 10;
@@ -558,6 +560,10 @@ message StartJobRequest {
     string folder = 3;
     // Compression
     backup.v1.BackupCompression compression = 4;
+    // Ordered names of the backups to apply before the target (`name`) when restoring an
+    // incremental backup: the full base first, then each intermediate incremental. Empty for a
+    // full/snapshot restore. All chain members share `folder`.
+    repeated string base_names = 5;
     // Where backup is stored.
     oneof location_config {
       S3LocationConfig s3_config = 10;

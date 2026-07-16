@@ -39,6 +39,7 @@ func (v *artifactTableType) Columns() []string {
 		"status",
 		"type",
 		"compression",
+		"parent_artifact_id",
 		"schedule_id",
 		"created_at",
 		"updated_at",
@@ -80,6 +81,7 @@ var ArtifactTable = &artifactTableType{
 			{Name: "Status", Type: "BackupStatus", Column: "status"},
 			{Name: "Type", Type: "ArtifactType", Column: "type"},
 			{Name: "Compression", Type: "BackupCompression", Column: "compression"},
+			{Name: "ParentArtifactID", Type: "*string", Column: "parent_artifact_id"},
 			{Name: "ScheduleID", Type: "string", Column: "schedule_id"},
 			{Name: "CreatedAt", Type: "time.Time", Column: "created_at"},
 			{Name: "UpdatedAt", Type: "time.Time", Column: "updated_at"},
@@ -94,7 +96,7 @@ var ArtifactTable = &artifactTableType{
 
 // String returns a string representation of this struct or record.
 func (s Artifact) String() string {
-	res := make([]string, 17)
+	res := make([]string, 18)
 	res[0] = "ID: " + reform.Inspect(s.ID, true)
 	res[1] = "Name: " + reform.Inspect(s.Name, true)
 	res[2] = "Vendor: " + reform.Inspect(s.Vendor, true)
@@ -106,12 +108,13 @@ func (s Artifact) String() string {
 	res[8] = "Status: " + reform.Inspect(s.Status, true)
 	res[9] = "Type: " + reform.Inspect(s.Type, true)
 	res[10] = "Compression: " + reform.Inspect(s.Compression, true)
-	res[11] = "ScheduleID: " + reform.Inspect(s.ScheduleID, true)
-	res[12] = "CreatedAt: " + reform.Inspect(s.CreatedAt, true)
-	res[13] = "UpdatedAt: " + reform.Inspect(s.UpdatedAt, true)
-	res[14] = "IsShardedCluster: " + reform.Inspect(s.IsShardedCluster, true)
-	res[15] = "Folder: " + reform.Inspect(s.Folder, true)
-	res[16] = "MetadataList: " + reform.Inspect(s.MetadataList, true)
+	res[11] = "ParentArtifactID: " + reform.Inspect(s.ParentArtifactID, true)
+	res[12] = "ScheduleID: " + reform.Inspect(s.ScheduleID, true)
+	res[13] = "CreatedAt: " + reform.Inspect(s.CreatedAt, true)
+	res[14] = "UpdatedAt: " + reform.Inspect(s.UpdatedAt, true)
+	res[15] = "IsShardedCluster: " + reform.Inspect(s.IsShardedCluster, true)
+	res[16] = "Folder: " + reform.Inspect(s.Folder, true)
+	res[17] = "MetadataList: " + reform.Inspect(s.MetadataList, true)
 	return strings.Join(res, ", ")
 }
 
@@ -130,6 +133,7 @@ func (s *Artifact) Values() []interface{} {
 		s.Status,
 		s.Type,
 		s.Compression,
+		s.ParentArtifactID,
 		s.ScheduleID,
 		s.CreatedAt,
 		s.UpdatedAt,
@@ -154,6 +158,7 @@ func (s *Artifact) Pointers() []interface{} {
 		&s.Status,
 		&s.Type,
 		&s.Compression,
+		&s.ParentArtifactID,
 		&s.ScheduleID,
 		&s.CreatedAt,
 		&s.UpdatedAt,

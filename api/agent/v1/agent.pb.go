@@ -5359,6 +5359,8 @@ type StartJobRequest_MySQLBackup struct {
 	Folder string `protobuf:"bytes,7,opt,name=folder,proto3" json:"folder,omitempty"`
 	// Compression
 	Compression v11.BackupCompression `protobuf:"varint,8,opt,name=compression,proto3,enum=backup.v1.BackupCompression" json:"compression,omitempty"`
+	// Base LSN for an incremental backup (xtrabackup --incremental-lsn). Empty for a full backup.
+	IncrementalBaseLsn string `protobuf:"bytes,9,opt,name=incremental_base_lsn,json=incrementalBaseLsn,proto3" json:"incremental_base_lsn,omitempty"`
 	// Backup target location.
 	//
 	// Types that are valid to be assigned to LocationConfig:
@@ -5455,6 +5457,13 @@ func (x *StartJobRequest_MySQLBackup) GetCompression() v11.BackupCompression {
 	return v11.BackupCompression(0)
 }
 
+func (x *StartJobRequest_MySQLBackup) GetIncrementalBaseLsn() string {
+	if x != nil {
+		return x.IncrementalBaseLsn
+	}
+	return ""
+}
+
 func (x *StartJobRequest_MySQLBackup) GetLocationConfig() isStartJobRequest_MySQLBackup_LocationConfig {
 	if x != nil {
 		return x.LocationConfig
@@ -5492,6 +5501,10 @@ type StartJobRequest_MySQLRestoreBackup struct {
 	Folder string `protobuf:"bytes,3,opt,name=folder,proto3" json:"folder,omitempty"`
 	// Compression
 	Compression v11.BackupCompression `protobuf:"varint,4,opt,name=compression,proto3,enum=backup.v1.BackupCompression" json:"compression,omitempty"`
+	// Ordered names of the backups to apply before the target (`name`) when restoring an
+	// incremental backup: the full base first, then each intermediate incremental. Empty for a
+	// full/snapshot restore. All chain members share `folder`.
+	BaseNames []string `protobuf:"bytes,5,rep,name=base_names,json=baseNames,proto3" json:"base_names,omitempty"`
 	// Where backup is stored.
 	//
 	// Types that are valid to be assigned to LocationConfig:
@@ -5558,6 +5571,13 @@ func (x *StartJobRequest_MySQLRestoreBackup) GetCompression() v11.BackupCompress
 		return x.Compression
 	}
 	return v11.BackupCompression(0)
+}
+
+func (x *StartJobRequest_MySQLRestoreBackup) GetBaseNames() []string {
+	if x != nil {
+		return x.BaseNames
+	}
+	return nil
 }
 
 func (x *StartJobRequest_MySQLRestoreBackup) GetLocationConfig() isStartJobRequest_MySQLRestoreBackup_LocationConfig {
@@ -6955,14 +6975,14 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"bucketName\x12#\n" +
 	"\rbucket_region\x18\x05 \x01(\tR\fbucketRegion\".\n" +
 	"\x18FilesystemLocationConfig\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"\xeb\x0f\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\"\xbc\x10\n" +
 	"\x0fStartJobRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12J\n" +
 	"\fmysql_backup\x18\v \x01(\v2%.agent.v1.StartJobRequest.MySQLBackupH\x00R\vmysqlBackup\x12`\n" +
 	"\x14mysql_restore_backup\x18\f \x01(\v2,.agent.v1.StartJobRequest.MySQLRestoreBackupH\x00R\x12mysqlRestoreBackup\x12P\n" +
 	"\x0emongodb_backup\x18\r \x01(\v2'.agent.v1.StartJobRequest.MongoDBBackupH\x00R\rmongodbBackup\x12f\n" +
-	"\x16mongodb_restore_backup\x18\x0e \x01(\v2..agent.v1.StartJobRequest.MongoDBRestoreBackupH\x00R\x14mongodbRestoreBackup\x1a\xe2\x02\n" +
+	"\x16mongodb_restore_backup\x18\x0e \x01(\v2..agent.v1.StartJobRequest.MongoDBRestoreBackupH\x00R\x14mongodbRestoreBackup\x1a\x94\x03\n" +
 	"\vMySQLBackup\x12\x18\n" +
 	"\x04user\x18\x01 \x01(\tB\x04\x88\xb5\x18\x01R\x04user\x12 \n" +
 	"\bpassword\x18\x02 \x01(\tB\x04\x88\xb5\x18\x01R\bpassword\x12\x18\n" +
@@ -6971,16 +6991,19 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x06socket\x18\x05 \x01(\tR\x06socket\x12\x12\n" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12\x16\n" +
 	"\x06folder\x18\a \x01(\tR\x06folder\x12>\n" +
-	"\vcompression\x18\b \x01(\x0e2\x1c.backup.v1.BackupCompressionR\vcompression\x129\n" +
+	"\vcompression\x18\b \x01(\x0e2\x1c.backup.v1.BackupCompressionR\vcompression\x120\n" +
+	"\x14incremental_base_lsn\x18\t \x01(\tR\x12incrementalBaseLsn\x129\n" +
 	"\ts3_config\x18\n" +
 	" \x01(\v2\x1a.agent.v1.S3LocationConfigH\x00R\bs3ConfigB\x11\n" +
-	"\x0flocation_configJ\x04\b\v\x10\fR\x11filesystem_config\x1a\x86\x02\n" +
+	"\x0flocation_configJ\x04\b\v\x10\fR\x11filesystem_config\x1a\xa5\x02\n" +
 	"\x12MySQLRestoreBackup\x12\x1d\n" +
 	"\n" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
 	"\x06folder\x18\x03 \x01(\tR\x06folder\x12>\n" +
-	"\vcompression\x18\x04 \x01(\x0e2\x1c.backup.v1.BackupCompressionR\vcompression\x129\n" +
+	"\vcompression\x18\x04 \x01(\x0e2\x1c.backup.v1.BackupCompressionR\vcompression\x12\x1d\n" +
+	"\n" +
+	"base_names\x18\x05 \x03(\tR\tbaseNames\x129\n" +
 	"\ts3_config\x18\n" +
 	" \x01(\v2\x1a.agent.v1.S3LocationConfigH\x00R\bs3ConfigB\x11\n" +
 	"\x0flocation_configJ\x04\b\v\x10\fR\x11filesystem_config\x1a\xbe\x03\n" +

@@ -143,7 +143,7 @@ func TestValidation(t *testing.T) {
 				errMsg: "unsupported backup data model for mySQL: logical",
 			},
 			{
-				name: "unsupported incremental backup mode",
+				name: "normal incremental",
 				params: &BackupTaskParams{
 					ServiceID:   "service-id",
 					LocationID:  "location-id",
@@ -152,7 +152,6 @@ func TestValidation(t *testing.T) {
 					Mode:        models.Incremental,
 					Compression: models.Default,
 				},
-				errMsg: "unsupported backup mode for mySQL: incremental",
 			},
 			{
 				name: "unsupported PITR backup mode",
@@ -171,7 +170,7 @@ func TestValidation(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				_, err := NewMySQLBackupTask(tt.params)
+				task, err := NewMySQLBackupTask(tt.params)
 
 				if tt.errMsg != "" {
 					require.EqualError(t, err, tt.errMsg)
@@ -179,6 +178,8 @@ func TestValidation(t *testing.T) {
 				}
 
 				require.NoError(t, err)
+				require.Equal(t, models.ScheduledMySQLBackupTask, task.Type())
+				require.Equal(t, tt.params.Mode, task.Data().MySQLBackupTask.Mode)
 			})
 		}
 	})
@@ -340,7 +341,7 @@ func TestValidation(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				_, err := NewMongoDBBackupTask(tt.params)
+				task, err := NewMongoDBBackupTask(tt.params)
 
 				if tt.errMsg != "" {
 					require.EqualError(t, err, tt.errMsg)
@@ -348,6 +349,8 @@ func TestValidation(t *testing.T) {
 				}
 
 				require.NoError(t, err)
+				require.Equal(t, models.ScheduledMongoDBBackupTask, task.Type())
+				require.Equal(t, tt.params.Mode, task.Data().MongoDBBackupTask.Mode)
 			})
 		}
 	})

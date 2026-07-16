@@ -598,7 +598,7 @@ func (s *BackupService) DeleteArtifact(ctx context.Context, req *backupv1.Delete
 	storage := backup.GetStorageForLocation(location)
 
 	if err := s.removalSVC.DeleteArtifact(storage, req.ArtifactId, req.RemoveFiles); err != nil {
-		return nil, err
+		return nil, convertError(err)
 	}
 	return &backupv1.DeleteArtifactResponse{}, nil
 }
@@ -832,6 +832,7 @@ func convertError(e error) error {
 		return status.Error(codes.AlreadyExists, e.Error())
 	case errors.Is(e, backup.ErrAnotherOperationInProgress),
 		errors.Is(e, backup.ErrArtifactNotReady),
+		errors.Is(e, backup.ErrArtifactHasChildren),
 		errors.Is(e, backup.ErrIncompatiblePBM),
 		errors.Is(e, backup.ErrIncompatibleLocationType),
 		errors.Is(e, backup.ErrIncompatibleService),

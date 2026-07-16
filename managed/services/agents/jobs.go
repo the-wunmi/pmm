@@ -37,6 +37,7 @@ var (
 
 	pmmAgentMinVersionForMongoLogicalBackupAndRestore  = version.Must(version.NewVersion("2.19"))
 	pmmAgentMinVersionForMySQLBackupAndRestore         = version.Must(version.NewVersion("2.23"))
+	pmmAgentMinVersionForMySQLIncrementalBackup        = version.Must(version.NewVersion("3.8.1-0"))
 	pmmAgentMinVersionForMongoPhysicalBackupAndRestore = version.Must(version.NewVersion("2.31.0-0"))
 	pmmAgentMinVersionForMongoDBUseFilesystemStorage   = version.Must(version.NewVersion("2.32.0-0"))
 	pmmAgentMinVersionForMongoPITRRestore              = version.Must(version.NewVersion("2.32.0-0"))
@@ -103,6 +104,16 @@ func (s *JobsService) RestartJob(ctx context.Context, jobID string) error { //no
 			if err != nil {
 				return errors.WithStack(err)
 			}
+
+			if job.Data.MySQLBackup.IncrementalBaseLSN != "" {
+				restored, err := models.RestoreAttemptedSince(tx.Querier, job.Data.MySQLBackup.ServiceID, artifact.CreatedAt)
+				if err != nil {
+					return err
+				}
+				if restored {
+					return errors.New("not retrying incremental backup: a restore may have reset the datadir LSN")
+				}
+			}
 		case models.MongoDBBackupJob:
 			artifact, err = models.FindArtifactByID(tx.Querier, job.Data.MongoDBBackup.ArtifactID)
 			if err != nil {
@@ -148,7 +159,8 @@ func (s *JobsService) RestartJob(ctx context.Context, jobID string) error { //no
 
 	switch job.Type {
 	case models.MySQLBackupJob:
-		if err := s.StartMySQLBackupJob(job.ID, job.PMMAgentID, job.Timeout, artifact.Name, dbConfig, locationConfig, artifact.Folder, artifact.Compression); err != nil {
+		if err := s.StartMySQLBackupJob(job.ID, job.PMMAgentID, job.Timeout, artifact.Name, dbConfig, locationConfig, artifact.Folder,
+			artifact.Compression, job.Data.MySQLBackup.IncrementalBaseLSN); err != nil {
 			return errors.WithStack(err)
 		}
 	case models.MongoDBBackupJob:
@@ -187,12 +199,27 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 				return errors.Errorf("result type %s doesn't match job type %s", models.MySQLBackupJob, job.Type)
 			}
 
+			metadata := artifactMetadataFromProto(result.MysqlBackup.Metadata)
+
+			if baseLSN := job.Data.MySQLBackup.IncrementalBaseLSN; baseLSN != "" &&
+				!incrementalMetadataMatchesBase(metadata, baseLSN) {
+				_, err := models.UpdateArtifact(t.Querier, job.Data.MySQLBackup.ArtifactID, models.UpdateArtifactParams{
+					Status: models.ErrorBackupStatus.Pointer(),
+				})
+				if err != nil {
+					return err
+				}
+				job.Error = "agent did not produce an incremental backup for the requested base; the agent may not support incremental backups"
+				job.Done = true
+				return t.Update(job)
+			}
+
 			artifact, err := models.UpdateArtifact(
 				t.Querier,
 				job.Data.MySQLBackup.ArtifactID,
 				models.UpdateArtifactParams{
 					Status:   models.SuccessBackupStatus.Pointer(),
-					Metadata: artifactMetadataFromProto(result.MysqlBackup.Metadata),
+					Metadata: metadata,
 				},
 			)
 			if err != nil {
@@ -381,20 +408,37 @@ func (s *JobsService) handleJobProgress(_ context.Context, progress *agentv1.Job
 }
 
 // StartMySQLBackupJob starts mysql backup job on the pmm-agent.
-func (s *JobsService) StartMySQLBackupJob(jobID, pmmAgentID string, timeout time.Duration, name string, dbConfig *models.DBConfig, locationConfig *models.BackupLocationConfig, folder string, compression models.BackupCompression) error { //nolint:lll
+func (s *JobsService) StartMySQLBackupJob(
+	jobID, pmmAgentID string,
+	timeout time.Duration,
+	name string,
+	dbConfig *models.DBConfig,
+	locationConfig *models.BackupLocationConfig,
+	folder string,
+	compression models.BackupCompression,
+	incrementalBaseLSN string,
+) error {
 	if err := models.PMMAgentSupported(s.r.db.Querier, pmmAgentID,
 		"mysql backup", pmmAgentMinVersionForMySQLBackupAndRestore); err != nil {
 		return err
 	}
 
+	if incrementalBaseLSN != "" {
+		if err := models.PMMAgentSupported(s.r.db.Querier, pmmAgentID,
+			"mysql incremental backup", pmmAgentMinVersionForMySQLIncrementalBackup); err != nil {
+			return err
+		}
+	}
+
 	mySQLReq := &agentv1.StartJobRequest_MySQLBackup{
-		Name:     name,
-		User:     dbConfig.User,
-		Password: dbConfig.Password,
-		Address:  dbConfig.Address,
-		Port:     int32(dbConfig.Port), //nolint:gosec // port is uint16
-		Socket:   dbConfig.Socket,
-		Folder:   folder,
+		Name:               name,
+		User:               dbConfig.User,
+		Password:           dbConfig.Password,
+		Address:            dbConfig.Address,
+		Port:               int32(dbConfig.Port), //nolint:gosec // port is uint16
+		Socket:             dbConfig.Socket,
+		Folder:             folder,
+		IncrementalBaseLsn: incrementalBaseLSN,
 	}
 
 	var err error
@@ -536,6 +580,7 @@ func (s *JobsService) StartMySQLRestoreBackupJob(
 	serviceID string,
 	timeout time.Duration,
 	name string,
+	baseNames []string,
 	locationConfig *models.BackupLocationConfig,
 	folder string,
 	compression models.BackupCompression,
@@ -543,6 +588,13 @@ func (s *JobsService) StartMySQLRestoreBackupJob(
 	if err := models.PMMAgentSupported(s.r.db.Querier, pmmAgentID,
 		"mysql restore", pmmAgentMinVersionForMySQLBackupAndRestore); err != nil {
 		return err
+	}
+
+	if len(baseNames) > 0 {
+		if err := models.PMMAgentSupported(s.r.db.Querier, pmmAgentID,
+			"mysql incremental restore", pmmAgentMinVersionForMySQLIncrementalBackup); err != nil {
+			return err
+		}
 	}
 
 	if locationConfig.S3Config == nil {
@@ -553,6 +605,7 @@ func (s *JobsService) StartMySQLRestoreBackupJob(
 		ServiceId: serviceID,
 		Name:      name,
 		Folder:    folder,
+		BaseNames: baseNames,
 		LocationConfig: &agentv1.StartJobRequest_MySQLRestoreBackup_S3Config{
 			S3Config: convertS3ConfigModel(locationConfig.S3Config),
 		},
@@ -857,6 +910,15 @@ func createJobLog(querier *reform.Querier, jobID, data string, chunkID int, last
 	return err
 }
 
+// incrementalMetadataMatchesBase reports whether the backup metadata is an incremental taken
+// against baseLSN, i.e. its recorded from_lsn == baseLSN.
+func incrementalMetadataMatchesBase(metadata *models.Metadata, baseLSN string) bool {
+	if metadata == nil || metadata.BackupToolData == nil || metadata.BackupToolData.XtrabackupMetadata == nil {
+		return false
+	}
+	return metadata.BackupToolData.XtrabackupMetadata.FromLSN == baseLSN
+}
+
 // artifactMetadataFromProto returns artifact metadata converted from protobuf to Go model format.
 func artifactMetadataFromProto(metadata *backuppb.Metadata) *models.Metadata {
 	if metadata == nil {
@@ -880,6 +942,11 @@ func artifactMetadataFromProto(metadata *backuppb.Metadata) *models.Metadata {
 		switch toolType := metadata.BackupToolMetadata.(type) {
 		case *backuppb.Metadata_PbmMetadata:
 			res.BackupToolData = &models.BackupToolData{PbmMetadata: &models.PbmMetadata{Name: toolType.PbmMetadata.Name}}
+		case *backuppb.Metadata_XtrabackupMetadata:
+			res.BackupToolData = &models.BackupToolData{XtrabackupMetadata: &models.XtrabackupMetadata{
+				ToLSN:   toolType.XtrabackupMetadata.ToLsn,
+				FromLSN: toolType.XtrabackupMetadata.FromLsn,
+			}}
 		default:
 			// Do nothing.
 		}

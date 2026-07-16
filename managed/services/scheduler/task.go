@@ -96,7 +96,7 @@ func NewMySQLBackupTask(params *BackupTaskParams) (Task, error) { //nolint:iretu
 		return nil, err
 	}
 
-	if params.Mode != models.Snapshot {
+	if params.Mode != models.Snapshot && params.Mode != models.Incremental {
 		return nil, errors.Errorf("unsupported backup mode for mySQL: %s", params.Mode)
 	}
 

@@ -11448,6 +11448,8 @@ func (m *StartJobRequest_MySQLBackup) validate(all bool) error {
 
 	// no validation rules for Compression
 
+	// no validation rules for IncrementalBaseLsn
+
 	switch v := m.LocationConfig.(type) {
 	case *StartJobRequest_MySQLBackup_S3Config:
 		if v == nil {

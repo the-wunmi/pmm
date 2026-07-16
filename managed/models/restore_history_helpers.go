@@ -85,6 +85,20 @@ func FindRestoreHistoryItems(q *reform.Querier, filters RestoreHistoryItemFilter
 	return items, nil
 }
 
+// RestoreAttemptedSince reports whether any restore for the service was attempted after ts.
+// Even a failed restore may have replaced the datadir and reset its LSN lineage, so any status counts.
+func RestoreAttemptedSince(q *reform.Querier, serviceID string, ts time.Time) (bool, error) {
+	tail := "WHERE service_id = $1 AND (started_at > $2 OR finished_at > $2) LIMIT 1"
+	switch _, err := q.SelectOneFrom(RestoreHistoryItemTable, tail, serviceID, ts); {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, reform.ErrNoRows):
+		return false, nil
+	default:
+		return false, errors.WithStack(err)
+	}
+}
+
 // FindRestoreHistoryItemByID finds restore history item. Returns ErrNotFound if requested item not found.
 func FindRestoreHistoryItemByID(q *reform.Querier, id string) (*RestoreHistoryItem, error) {
 	if id == "" {

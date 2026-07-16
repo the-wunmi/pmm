@@ -1191,6 +1191,10 @@ var databaseSchema = [][]string{
 
 		`ALTER TABLE artifacts ALTER COLUMN compression DROP DEFAULT`,
 	},
+	120: {
+		`ALTER TABLE artifacts ADD COLUMN parent_artifact_id VARCHAR`,
+		`ALTER TABLE artifacts ADD CONSTRAINT artifacts_parent_artifact_id_fkey FOREIGN KEY (parent_artifact_id) REFERENCES artifacts (id)`,
+	},
 }
 
 // ^^^ Avoid default values in schema definition. ^^^

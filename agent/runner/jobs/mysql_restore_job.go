@@ -42,6 +42,8 @@ const (
 	// TODO make mySQLDirectory autorecognized as done in 'xtrabackup' utility; see 'xtrabackup --help' --datadir parameter.
 	mySQLDirectory   = "/var/lib/mysql"
 	systemctlTimeout = 10 * time.Second
+	// Thread count for the download, decompress and prepare phases.
+	restoreParallelism = "10"
 )
 
 var mysqlServiceRegex = regexp.MustCompile(`mysql(d)?\.service`) // this is used to lookup MySQL service in the list of all system services
@@ -52,6 +54,7 @@ type MySQLRestoreJob struct {
 	timeout        time.Duration
 	l              logrus.FieldLogger
 	name           string
+	baseNames      []string
 	locationConfig BackupLocationConfig
 	folder         string
 	compression    backupv1.BackupCompression
@@ -62,6 +65,7 @@ func NewMySQLRestoreJob(
 	id string,
 	timeout time.Duration,
 	name string,
+	baseNames []string,
 	locationConfig BackupLocationConfig,
 	folder string,
 	compression backupv1.BackupCompression,
@@ -71,6 +75,7 @@ func NewMySQLRestoreJob(
 		timeout:        timeout,
 		l:              logrus.WithFields(logrus.Fields{"id": id, "type": "mysql_restore"}),
 		name:           name,
+		baseNames:      baseNames,
 		locationConfig: locationConfig,
 		folder:         folder,
 		compression:    compression,
@@ -128,7 +133,8 @@ func (j *MySQLRestoreJob) Run(ctx context.Context, send Send) error {
 	}
 	j.l.Debugf("Using MySQL service name: %s", mySQLServiceName)
 
-	if err := j.restoreMySQLFromS3(ctx, tmpDir); err != nil {
+	preparedDir, err := j.prepareRestoreChain(ctx, tmpDir)
+	if err != nil {
 		return errors.WithStack(err)
 	}
 
@@ -143,7 +149,7 @@ func (j *MySQLRestoreJob) Run(ctx context.Context, send Send) error {
 		}
 	}
 
-	if err := restoreBackup(ctx, tmpDir, mySQLDirectory, j.compression); err != nil {
+	if err := restoreBackup(ctx, preparedDir, mySQLDirectory); err != nil {
 		return errors.WithStack(err)
 	}
 
@@ -205,7 +211,7 @@ func prepareRestoreCommands( //nolint:nonamedreturns
 		"--s3-secret-key="+config.S3Config.SecretKey,
 		"--s3-bucket="+config.S3Config.BucketName,
 		"--s3-region="+config.S3Config.BucketRegion,
-		"--parallel=10",
+		"--parallel="+restoreParallelism,
 		folder,
 	)
 	xbcloudCmd.Stderr = stderr
@@ -221,7 +227,7 @@ func prepareRestoreCommands( //nolint:nonamedreturns
 		"restore",
 		"-x",
 		"--directory="+targetDirectory,
-		"--parallel=10",
+		"--parallel="+restoreParallelism,
 	)
 	xbstreamCmd.Stdin = xbcloudStdout
 	xbstreamCmd.Stderr = stderr
@@ -230,13 +236,60 @@ func prepareRestoreCommands( //nolint:nonamedreturns
 	return xbcloudCmd, xbstreamCmd, nil
 }
 
-func (j *MySQLRestoreJob) restoreMySQLFromS3(ctx context.Context, targetDirectory string) (rerr error) {
+func (j *MySQLRestoreJob) prepareRestoreChain(ctx context.Context, workDir string) (string, error) {
+	chain := make([]string, 0, len(j.baseNames)+1)
+	chain = append(chain, j.baseNames...)
+	chain = append(chain, j.name)
+
+	baseDirectory := filepath.Join(workDir, "base")
+	if err := os.MkdirAll(baseDirectory, 0o750); err != nil {
+		return "", errors.Wrap(err, "failed to create base restore directory")
+	}
+
+	for i, backupName := range chain {
+		applyLogOnly := i < len(chain)-1
+
+		if i == 0 {
+			if err := j.downloadAndExtract(ctx, backupName, baseDirectory); err != nil {
+				return "", errors.Wrapf(err, "failed to download base backup %q", backupName)
+			}
+			if err := decompressBackup(ctx, baseDirectory, j.compression); err != nil {
+				return "", err
+			}
+			if err := prepareBackup(ctx, baseDirectory, "", applyLogOnly); err != nil {
+				return "", err
+			}
+			continue
+		}
+
+		incrementalDirectory := filepath.Join(workDir, "increment-"+strconv.Itoa(i))
+		if err := os.MkdirAll(incrementalDirectory, 0o750); err != nil {
+			return "", errors.Wrapf(err, "failed to create increment directory for %q", backupName)
+		}
+		if err := j.downloadAndExtract(ctx, backupName, incrementalDirectory); err != nil {
+			return "", errors.Wrapf(err, "failed to download increment %q", backupName)
+		}
+		if err := decompressBackup(ctx, incrementalDirectory, j.compression); err != nil {
+			return "", err
+		}
+		if err := prepareBackup(ctx, baseDirectory, incrementalDirectory, applyLogOnly); err != nil {
+			return "", err
+		}
+		if err := os.RemoveAll(incrementalDirectory); err != nil {
+			j.l.WithError(err).Warn("failed to remove merged increment directory")
+		}
+	}
+
+	return baseDirectory, nil
+}
+
+func (j *MySQLRestoreJob) downloadAndExtract(ctx context.Context, backupName, targetDirectory string) (rerr error) {
 	pipeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	var stderr, stdout bytes.Buffer
 
-	artifactFolder := path.Join(j.folder, j.name)
+	artifactFolder := path.Join(j.folder, backupName)
 
 	j.l.Debugf("Artifact folder is: %s", artifactFolder)
 
@@ -394,29 +447,42 @@ func getPermissions(path string) (os.FileMode, error) {
 	return info.Mode(), nil
 }
 
-func restoreBackup(ctx context.Context, backupDirectory, mySQLDirectory string, compression backupv1.BackupCompression) error {
-	// TODO We should implement recognizing correct default permissions based on DB configuration.
-	// Setting default value in case the base MySQL folder have been lost.
-	mysqlDirPermissions := os.FileMode(0o750)
-
-	if compression != backupv1.BackupCompression_BACKUP_COMPRESSION_NONE {
-		if output, err := exec.CommandContext( //nolint:gosec
-			ctx,
-			xtrabackupBin,
-			"--decompress",
-			"--target-dir="+backupDirectory).CombinedOutput(); err != nil {
-			return errors.Wrapf(err, "failed to decompress, output: %s", string(output))
-		}
+func decompressBackup(ctx context.Context, backupDirectory string, compression backupv1.BackupCompression) error {
+	if compression == backupv1.BackupCompression_BACKUP_COMPRESSION_NONE {
+		return nil
 	}
-
 	if output, err := exec.CommandContext( //nolint:gosec
 		ctx,
 		xtrabackupBin,
-		"--prepare",
+		"--decompress",
+		"--remove-original",
+		"--parallel="+restoreParallelism,
 		"--target-dir="+backupDirectory,
 	).CombinedOutput(); err != nil {
+		return errors.Wrapf(err, "failed to decompress, output: %s", string(output))
+	}
+	return nil
+}
+
+func prepareBackup(ctx context.Context, baseDirectory, incrementalDirectory string, applyLogOnly bool) error {
+	args := []string{"--prepare", "--parallel=" + restoreParallelism, "--target-dir=" + baseDirectory}
+	if applyLogOnly {
+		args = append(args, "--apply-log-only")
+	}
+	if incrementalDirectory != "" {
+		args = append(args, "--incremental-dir="+incrementalDirectory)
+	}
+
+	if output, err := exec.CommandContext(ctx, xtrabackupBin, args...).CombinedOutput(); err != nil { //nolint:gosec
 		return errors.Wrapf(err, "failed to prepare, output: %s", string(output))
 	}
+	return nil
+}
+
+func restoreBackup(ctx context.Context, backupDirectory, mySQLDirectory string) error {
+	// TODO We should implement recognizing correct default permissions based on DB configuration.
+	// Setting default value in case the base MySQL folder have been lost.
+	mysqlDirPermissions := os.FileMode(0o750)
 
 	exists, err := isPathExists(mySQLDirectory)
 	if err != nil {

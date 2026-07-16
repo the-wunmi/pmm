@@ -16,6 +16,7 @@
 package backup
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"testing"
@@ -1068,4 +1069,78 @@ func TestConvertCompressionToBackupCompression(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConvertBackupMode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("proto to model", func(t *testing.T) {
+		t.Parallel()
+
+		testCases := []struct {
+			proto   backupv1.BackupMode
+			model   models.BackupMode
+			errCode codes.Code
+		}{
+			{proto: backupv1.BackupMode_BACKUP_MODE_SNAPSHOT, model: models.Snapshot},
+			{proto: backupv1.BackupMode_BACKUP_MODE_INCREMENTAL, model: models.Incremental},
+			{proto: backupv1.BackupMode_BACKUP_MODE_PITR, model: models.PITR},
+			{proto: backupv1.BackupMode_BACKUP_MODE_UNSPECIFIED, errCode: codes.InvalidArgument},
+			{proto: backupv1.BackupMode(999), errCode: codes.InvalidArgument},
+		}
+		for _, tt := range testCases {
+			t.Run(tt.proto.String(), func(t *testing.T) {
+				t.Parallel()
+				model, err := convertBackupModeToModel(tt.proto)
+				if tt.errCode != codes.OK {
+					tests.AssertGRPCErrorCode(t, tt.errCode, err)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tt.model, model)
+			})
+		}
+	})
+
+	t.Run("model to proto", func(t *testing.T) {
+		t.Parallel()
+
+		testCases := []struct {
+			model   models.BackupMode
+			proto   backupv1.BackupMode
+			wantErr bool
+		}{
+			{model: models.Snapshot, proto: backupv1.BackupMode_BACKUP_MODE_SNAPSHOT},
+			{model: models.Incremental, proto: backupv1.BackupMode_BACKUP_MODE_INCREMENTAL},
+			{model: models.PITR, proto: backupv1.BackupMode_BACKUP_MODE_PITR},
+			{model: models.BackupMode("bogus"), wantErr: true},
+		}
+		for _, tt := range testCases {
+			t.Run(string(tt.model), func(t *testing.T) {
+				t.Parallel()
+				proto, err := convertModelToBackupMode(tt.model)
+				if tt.wantErr {
+					require.Error(t, err)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tt.proto, proto)
+			})
+		}
+	})
+
+	t.Run("round trip", func(t *testing.T) {
+		t.Parallel()
+
+		for _, mode := range []models.BackupMode{models.Snapshot, models.Incremental, models.PITR} {
+			t.Run(string(mode), func(t *testing.T) {
+				t.Parallel()
+				proto, err := convertModelToBackupMode(mode)
+				require.NoError(t, err)
+				model, err := convertBackupModeToModel(proto)
+				require.NoError(t, err)
+				assert.Equal(t, mode, model)
+			})
+		}
+	})
 }
