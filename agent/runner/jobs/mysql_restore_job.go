@@ -138,7 +138,7 @@ func (j *MySQLRestoreJob) Run(ctx context.Context, send Send) error {
 		}
 	}
 
-	if err := installPreparedBackup(ctx, preparedDir, mySQLDirectory); err != nil {
+	if err := restoreBackup(ctx, preparedDir, mySQLDirectory); err != nil {
 		return errors.WithStack(err)
 	}
 
@@ -464,7 +464,7 @@ func prepareBackup(ctx context.Context, baseDirectory, incrementalDirectory stri
 	return nil
 }
 
-func installPreparedBackup(ctx context.Context, backupDirectory, mySQLDirectory string) error {
+func restoreBackup(ctx context.Context, backupDirectory, mySQLDirectory string) error {
 	// TODO We should implement recognizing correct default permissions based on DB configuration.
 	// Setting default value in case the base MySQL folder have been lost.
 	mysqlDirPermissions := os.FileMode(0o750)
