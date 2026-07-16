@@ -89,6 +89,14 @@ func init() {
 			xtrabackupMinVersion: "8.0.14",
 			xtrabackupMaxVersion: "9.0",
 		},
+		// MySQL 8.4 LTS: Percona pins xtrabackup at 8.4.0-N and it backs up the whole 8.4.x line.
+		// https://docs.percona.com/percona-xtrabackup/8.4/release-notes/8.4.0-1.html
+		{
+			mysqlMinVersion:      "8.4",
+			mysqlMaxVersion:      "8.5",
+			xtrabackupMinVersion: "8.4",
+			xtrabackupMaxVersion: "8.5",
+		},
 	}
 
 	mysqlAndXtrabackupCompatibleVersions = make([]compatibility, 0, len(versionStrings))
@@ -120,20 +128,20 @@ func mysqlAndXtrabackupCompatible(mysqlVersionString, xtrabackupVersionString st
 	}
 	xtrabackupVersion = xtrabackupVersion.Core()
 
-	// See comment to alignedVersion.
-	// Using compatibility rule.
+	// Explicit compatibility matrix takes precedence (pre-8.0.22 versions and the 8.4 LTS line).
+	for _, cv := range mysqlAndXtrabackupCompatibleVersions {
+		if (mysqlVersion.GreaterThanOrEqual(cv.dbMinVersion) &&
+			mysqlVersion.LessThan(cv.dbMaxVersion)) &&
+			xtrabackupVersion.GreaterThanOrEqual(cv.backupToolMinVersion) &&
+			xtrabackupVersion.LessThan(cv.backupToolMaxVersion) {
+			return true, nil
+		}
+	}
+
+	// See comment to alignedVersion. Otherwise use the version-alignment rule.
 	if mysqlVersion.GreaterThanOrEqual(alignedXtrabackupVersion) {
 		if xtrabackupVersion.GreaterThanOrEqual(mysqlVersion) && xtrabackupVersion.LessThan(maxAlignedXtrabackupVersion) {
 			return true, nil
-		}
-	} else { // Using compatibility matrix.
-		for _, cv := range mysqlAndXtrabackupCompatibleVersions {
-			if (mysqlVersion.GreaterThanOrEqual(cv.dbMinVersion) &&
-				mysqlVersion.LessThan(cv.dbMaxVersion)) &&
-				xtrabackupVersion.GreaterThanOrEqual(cv.backupToolMinVersion) &&
-				xtrabackupVersion.LessThan(cv.backupToolMaxVersion) {
-				return true, nil
-			}
 		}
 	}
 	return false, nil

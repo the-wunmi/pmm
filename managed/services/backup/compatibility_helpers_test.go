@@ -77,6 +77,12 @@ func TestMysqlAndXtrabackupCompatible(t *testing.T) {
 		{"8.0.28", "8.0.50"},
 		{"8.0.28", "8.99.99"},
 		{"8.99.99", "8.99.99"},
+
+		// MySQL 8.4 LTS: xtrabackup pinned at 8.4.0-N covers the whole 8.4.x line.
+		{"8.4.0", "8.4.0"},
+		{"8.4.9", "8.4.0"},
+		{"8.4.9", "8.4.0-6"},
+		{"8.4.0-6", "8.4.0-6"},
 	}
 
 	incompatible := []mysqlAndPXBVersions{
@@ -142,6 +148,10 @@ func TestMysqlAndXtrabackupCompatible(t *testing.T) {
 		{"9.0", "8.0.30"},
 		{"9.0", "8.99.99"},
 		{"9.0", "9.0"},
+		//
+		// MySQL 8.4 LTS requires an 8.4.x xtrabackup, not another series.
+		{"8.4.9", "8.0.35"},
+		{"8.4.9", "9.0"},
 	}
 
 	for _, ver := range compatible {
