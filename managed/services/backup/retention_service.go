@@ -75,7 +75,7 @@ func (s *RetentionService) EnforceRetention(scheduleID string) error {
 
 	switch mode {
 	case models.Snapshot, models.Incremental:
-		err = s.retentionByCount(storage, scheduleID, retention)
+		err = s.retentionSnapshot(storage, scheduleID, retention)
 	case models.PITR:
 		err = s.retentionPITR(storage, scheduleID, retention)
 	default:
@@ -86,9 +86,7 @@ func (s *RetentionService) EnforceRetention(scheduleID string) error {
 	return err
 }
 
-// retentionByCount keeps the newest `retention` successful artifacts of a schedule and deletes the
-// rest, but never a base while an incremental chained off it survives (see deletableArtifacts).
-func (s *RetentionService) retentionByCount(storage Storage, scheduleID string, retention uint32) error {
+func (s *RetentionService) retentionSnapshot(storage Storage, scheduleID string, retention uint32) error {
 	artifacts, err := models.FindArtifacts(s.db.Querier, models.ArtifactFilters{
 		ScheduleID: scheduleID,
 		Status:     models.SuccessBackupStatus,
@@ -101,18 +99,27 @@ func (s *RetentionService) retentionByCount(storage Storage, scheduleID string, 
 		return nil
 	}
 
-	// Spans every schedule, so a child in another schedule still pins its base.
-	allArtifacts, err := models.FindArtifacts(s.db.Querier, models.ArtifactFilters{})
+	candidates := artifacts[retention:]
+	failed, err := models.FindArtifacts(s.db.Querier, models.ArtifactFilters{
+		ScheduleID: scheduleID,
+		Status:     models.ErrorBackupStatus,
+	})
 	if err != nil {
 		return err
 	}
+	oldestKept := artifacts[retention-1].CreatedAt
+	for _, a := range failed {
+		if a.CreatedAt.Before(oldestKept) {
+			candidates = append(candidates, a)
+		}
+	}
 
-	for _, artifact := range deletableArtifacts(artifacts[retention:], allArtifacts) {
+	for _, artifact := range candidates {
 		err := s.removalSVC.DeleteArtifact(storage, artifact.ID, true)
 		switch {
 		case err == nil:
 		case errors.Is(err, ErrArtifactHasChildren):
-			// A child's async deletion hasn't finished; defer to a later retention run.
+			// A base still has a dependent incremental; defer to a later run once its children go.
 			s.l.Debugf("Deferring deletion of artifact %q: %v", artifact.ID, err)
 		default:
 			return err
@@ -120,52 +127,6 @@ func (s *RetentionService) retentionByCount(storage Storage, scheduleID string, 
 	}
 
 	return nil
-}
-
-// deletableArtifacts returns the candidates safe to delete: a candidate is excluded if any artifact
-// chained off it (transitively) is not itself a candidate, so allArtifacts must span all schedules.
-// The candidates order (newest-first) is preserved, which is children-before-parents within a chain.
-func deletableArtifacts(candidates, allArtifacts []*models.Artifact) []*models.Artifact {
-	candidateSet := make(map[string]struct{}, len(candidates))
-	for _, artifact := range candidates {
-		candidateSet[artifact.ID] = struct{}{}
-	}
-
-	childrenOf := make(map[string][]*models.Artifact)
-	for _, artifact := range allArtifacts {
-		if artifact.ParentArtifactID != nil {
-			parentID := *artifact.ParentArtifactID
-			childrenOf[parentID] = append(childrenOf[parentID], artifact)
-		}
-	}
-
-	memo := make(map[string]bool)
-	var hasSurvivingDescendant func(id string) bool
-	hasSurvivingDescendant = func(id string) bool {
-		if v, ok := memo[id]; ok {
-			return v
-		}
-		// Guard against cycles: assume no surviving descendant while recursing.
-		memo[id] = false
-		res := false
-		for _, child := range childrenOf[id] {
-			// A kept child (not a candidate), or a kept descendant below it.
-			if _, ok := candidateSet[child.ID]; !ok || hasSurvivingDescendant(child.ID) {
-				res = true
-				break
-			}
-		}
-		memo[id] = res
-		return res
-	}
-
-	deletable := make([]*models.Artifact, 0, len(candidates))
-	for _, artifact := range candidates {
-		if !hasSurvivingDescendant(artifact.ID) {
-			deletable = append(deletable, artifact)
-		}
-	}
-	return deletable
 }
 
 func (s *RetentionService) retentionPITR(storage Storage, scheduleID string, retention uint32) error {

@@ -104,6 +104,16 @@ func (s *JobsService) RestartJob(ctx context.Context, jobID string) error { //no
 			if err != nil {
 				return errors.WithStack(err)
 			}
+
+			if job.Data.MySQLBackup.IncrementalBaseLSN != "" {
+				restored, err := models.RestoreAttemptedSince(tx.Querier, job.Data.MySQLBackup.ServiceID, artifact.CreatedAt)
+				if err != nil {
+					return err
+				}
+				if restored {
+					return errors.New("not retrying incremental backup: a restore may have reset the datadir LSN")
+				}
+			}
 		case models.MongoDBBackupJob:
 			artifact, err = models.FindArtifactByID(tx.Querier, job.Data.MongoDBBackup.ArtifactID)
 			if err != nil {
@@ -193,8 +203,11 @@ func (s *JobsService) handleJobResult(_ context.Context, l *logrus.Entry, result
 
 			if baseLSN := job.Data.MySQLBackup.IncrementalBaseLSN; baseLSN != "" &&
 				!incrementalMetadataMatchesBase(metadata, baseLSN) {
-				if err := s.handleJobError(job); err != nil {
-					l.Errorf("failed to handle job error: %s", err)
+				_, err := models.UpdateArtifact(t.Querier, job.Data.MySQLBackup.ArtifactID, models.UpdateArtifactParams{
+					Status: models.ErrorBackupStatus.Pointer(),
+				})
+				if err != nil {
+					return err
 				}
 				job.Error = "agent did not produce an incremental backup for the requested base; the agent may not support incremental backups"
 				job.Done = true

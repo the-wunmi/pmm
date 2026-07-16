@@ -347,9 +347,20 @@ func (s *Artifact) MetadataRemoveFirstN(q *reform.Querier, n uint32) error {
 	return nil
 }
 
-// FindArtifactChain returns the restore chain ending at the given artifact, base-first: the full
-// base, then each intermediate incremental, then the artifact itself. A non-incremental artifact
-// yields a single-element chain. Fails on a broken chain (missing parent) or a cycle.
+// FindLatestSuccessfulArtifact returns the newest successful artifact for the given service, location and folder, or ErrNotFound if there is none.
+func FindLatestSuccessfulArtifact(q *reform.Querier, serviceID, locationID, folder string) (*Artifact, error) {
+	tail := "WHERE service_id = $1 AND location_id = $2 AND status = $3 AND folder = $4 ORDER BY created_at DESC LIMIT 1"
+	row, err := q.SelectOneFrom(ArtifactTable, tail, serviceID, locationID, SuccessBackupStatus, folder)
+	if err != nil {
+		if errors.Is(err, reform.ErrNoRows) {
+			return nil, errors.Wrap(ErrNotFound, "no successful artifact to base an incremental backup on")
+		}
+		return nil, errors.WithStack(err)
+	}
+	return row.(*Artifact), nil //nolint:forcetypeassert
+}
+
+// FindArtifactChain returns the restore chain ending at the given artifact, base-first (one element if non-incremental), or an error on a broken chain or cycle.
 func FindArtifactChain(q *reform.Querier, artifactID string) ([]*Artifact, error) {
 	var chain []*Artifact
 	seen := make(map[string]struct{})

@@ -68,6 +68,13 @@ type PerformBackupParams struct {
 	Folder        string
 }
 
+const (
+	// Re-anchor with a full once an incremental chain reaches this many members (full + increments).
+	maxIncrementalChainLength = 24
+	// Re-anchor with a full once a chain's seed full is older than this.
+	maxIncrementalBaseAge = 7 * 24 * time.Hour
+)
+
 // PerformBackup starts on-demand backup.
 func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams) (string, error) { //nolint:gocognit,cyclop
 	dbVersion, err := s.compatibilityService.CheckSoftwareCompatibilityForService(ctx, params.ServiceID)
@@ -127,23 +134,32 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 				switch mode {
 				case models.Snapshot:
 				case models.Incremental:
-					base, err := latestSuccessfulArtifact(tx.Querier, params.ServiceID, params.LocationID, params.Folder)
+					base, err := models.FindLatestSuccessfulArtifact(tx.Querier, params.ServiceID, params.LocationID, params.Folder)
 					if err != nil {
-						return err
-					}
-					// A restore after the base resets the datadir's LSN and breaks the chain; take a full backup instead.
-					restored, err := restoredSince(tx.Querier, params.ServiceID, base.CreatedAt)
-					if err != nil {
-						return err
-					}
-					if restored {
+						if !errors.Is(err, models.ErrNotFound) {
+							return err
+						}
 						mode = models.Snapshot
 						break
 					}
-					incrementalBaseLSN = base.LatestXtrabackupToLSN()
-					if incrementalBaseLSN == "" {
-						return errors.Errorf("base backup %q has no recorded LSN and cannot be used as an incremental base; take a full backup first", base.Name)
+					restored, err := models.RestoreAttemptedSince(tx.Querier, params.ServiceID, base.CreatedAt)
+					if err != nil {
+						return err
 					}
+					lsn := base.LatestXtrabackupToLSN()
+					if restored || lsn == "" || base.DBVersion != dbVersion {
+						mode = models.Snapshot
+						break
+					}
+					chain, err := models.FindArtifactChain(tx.Querier, base.ID)
+					if err != nil {
+						return err
+					}
+					if len(chain) >= maxIncrementalChainLength || time.Since(chain[0].CreatedAt) >= maxIncrementalBaseAge {
+						mode = models.Snapshot
+						break
+					}
+					incrementalBaseLSN = lsn
 					parentArtifactID = &base.ID
 				default:
 					return errors.Errorf("unsupported backup mode for mySQL: %s", mode)
@@ -535,41 +551,6 @@ func restoreChainBaseNames(q *reform.Querier, artifactID string) ([]string, erro
 		baseNames = append(baseNames, artifact.Name)
 	}
 	return baseNames, nil
-}
-
-// latestSuccessfulArtifact returns the most recent successful artifact for the given service, location and folder.
-func latestSuccessfulArtifact(q *reform.Querier, serviceID, locationID, folder string) (*models.Artifact, error) {
-	artifacts, err := models.FindArtifacts(q, models.ArtifactFilters{
-		ServiceID:  serviceID,
-		LocationID: locationID,
-		Status:     models.SuccessBackupStatus,
-		Folder:     &folder,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(artifacts) == 0 {
-		return nil, errors.New("no successful backup found to base an incremental backup on; take a full backup first")
-	}
-	// FindArtifacts returns artifacts sorted by creation time in descending order.
-	return artifacts[0], nil
-}
-
-// restoredSince reports whether a successful restore for the service finished after ts.
-func restoredSince(q *reform.Querier, serviceID string, ts time.Time) (bool, error) {
-	restores, err := models.FindRestoreHistoryItems(q, models.RestoreHistoryItemFilters{
-		ServiceID: serviceID,
-		Status:    models.SuccessRestoreStatus.Pointer(),
-	})
-	if err != nil {
-		return false, err
-	}
-	for _, r := range restores {
-		if r.FinishedAt != nil && r.FinishedAt.After(ts) {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func (s *Service) prepareBackupJob(

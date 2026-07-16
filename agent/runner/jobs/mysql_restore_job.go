@@ -250,7 +250,7 @@ func (j *MySQLRestoreJob) prepareRestoreChain(ctx context.Context, workDir strin
 			continue
 		}
 
-		incrementalDirectory := filepath.Join(workDir, "increment")
+		incrementalDirectory := filepath.Join(workDir, "increment-"+strconv.Itoa(i))
 		if err := os.MkdirAll(incrementalDirectory, 0o750); err != nil {
 			return "", errors.Wrapf(err, "failed to create increment directory for %q", backupName)
 		}
