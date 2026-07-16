@@ -78,6 +78,11 @@ func TestMysqlAndXtrabackupCompatible(t *testing.T) {
 		{"8.0.28", "8.99.99"},
 		{"8.99.99", "8.99.99"},
 
+		// xtrabackup 8.0.34+ disabled the server-version-check: backs up any newer 8.0.x server.
+		{"8.0.46", "8.0.35"},
+		{"8.0.46", "8.0.35-35"},
+		{"8.0.36", "8.0.34"},
+
 		// MySQL 8.4 LTS: xtrabackup pinned at 8.4.0-N covers the whole 8.4.x line.
 		{"8.4.0", "8.4.0"},
 		{"8.4.9", "8.4.0"},
@@ -148,6 +153,9 @@ func TestMysqlAndXtrabackupCompatible(t *testing.T) {
 		{"9.0", "8.0.30"},
 		{"9.0", "8.99.99"},
 		{"9.0", "9.0"},
+		//
+		// Below 8.0.34 the strict alignment still applies: older xtrabackup can't back up a newer server.
+		{"8.0.46", "8.0.33"},
 		//
 		// MySQL 8.4 LTS requires an 8.4.x xtrabackup, not another series.
 		{"8.4.9", "8.0.35"},

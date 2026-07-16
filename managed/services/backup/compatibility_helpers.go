@@ -89,6 +89,14 @@ func init() {
 			xtrabackupMinVersion: "8.0.14",
 			xtrabackupMaxVersion: "9.0",
 		},
+		// Percona XtraBackup 8.0.34 disabled the server-version-check, so 8.0.34+ backs up any 8.0.x server.
+		// https://docs.percona.com/percona-xtrabackup/8.0/server-backup-version-comparison.html
+		{
+			mysqlMinVersion:      "8.0.22",
+			mysqlMaxVersion:      "8.1",
+			xtrabackupMinVersion: "8.0.34",
+			xtrabackupMaxVersion: "8.1",
+		},
 		// MySQL 8.4 LTS: Percona pins xtrabackup at 8.4.0-N and it backs up the whole 8.4.x line.
 		// https://docs.percona.com/percona-xtrabackup/8.4/release-notes/8.4.0-1.html
 		{
