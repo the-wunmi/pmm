@@ -191,15 +191,16 @@ func TestPerformBackup(t *testing.T) {
 
 		t.Run("skipped while previous scheduled run is unfinished", func(t *testing.T) {
 			_, err := models.CreateArtifact(db.Querier, models.CreateArtifactParams{
-				Name:       "unfinished_scheduled_backup",
-				Vendor:     string(models.MySQLServiceType),
-				LocationID: s3Location.ID,
-				ServiceID:  pointer.GetString(agent.ServiceID),
-				DataModel:  models.PhysicalDataModel,
-				Mode:       models.Snapshot,
-				Status:     models.PendingBackupStatus,
-				ScheduleID: "test_schedule_id",
-				Folder:     "artifact_folder",
+				Name:        "unfinished_scheduled_backup",
+				Vendor:      string(models.MySQLServiceType),
+				LocationID:  s3Location.ID,
+				ServiceID:   pointer.GetString(agent.ServiceID),
+				DataModel:   models.PhysicalDataModel,
+				Mode:        models.Snapshot,
+				Status:      models.PendingBackupStatus,
+				ScheduleID:  "test_schedule_id",
+				Folder:      "artifact_folder",
+				Compression: models.Default,
 			})
 			require.NoError(t, err)
 
@@ -207,13 +208,14 @@ func TestPerformBackup(t *testing.T) {
 				Return("8.0.25", nil).Once()
 
 			artifactID, err := backupService.PerformBackup(ctx, PerformBackupParams{
-				ServiceID:  pointer.GetString(agent.ServiceID),
-				LocationID: s3Location.ID,
-				Name:       "test_backup",
-				DataModel:  models.PhysicalDataModel,
-				Mode:       models.Snapshot,
-				ScheduleID: "test_schedule_id",
-				Folder:     "artifact_folder",
+				ServiceID:   pointer.GetString(agent.ServiceID),
+				LocationID:  s3Location.ID,
+				Name:        "test_backup",
+				DataModel:   models.PhysicalDataModel,
+				Mode:        models.Snapshot,
+				ScheduleID:  "test_schedule_id",
+				Folder:      "artifact_folder",
+				Compression: models.Default,
 			})
 			require.ErrorIs(t, err, ErrAnotherOperationInProgress)
 			assert.Empty(t, artifactID)
@@ -227,17 +229,18 @@ func TestPerformBackup(t *testing.T) {
 			mockedCompatibilityService.On("CheckSoftwareCompatibilityForService", ctx, pointer.GetString(agent.ServiceID)).
 				Return("8.0.25", nil).Once()
 			mockedJobsService.On("StartMySQLBackupJob", mock.Anything, pointer.GetString(agent.PMMAgentID), time.Duration(0),
-				mock.Anything, mock.Anything, &models.BackupLocationConfig{S3Config: s3Location.S3Config}, "artifact_folder", "").
+				mock.Anything, mock.Anything, &models.BackupLocationConfig{S3Config: s3Location.S3Config}, "artifact_folder", models.Default, "").
 				Return(nil).Once()
 
 			artifactID, err := backupService.PerformBackup(ctx, PerformBackupParams{
-				ServiceID:  pointer.GetString(agent.ServiceID),
-				LocationID: s3Location.ID,
-				Name:       "test_backup_after_stale",
-				DataModel:  models.PhysicalDataModel,
-				Mode:       models.Snapshot,
-				ScheduleID: "test_schedule_id",
-				Folder:     "artifact_folder",
+				ServiceID:   pointer.GetString(agent.ServiceID),
+				LocationID:  s3Location.ID,
+				Name:        "test_backup_after_stale",
+				DataModel:   models.PhysicalDataModel,
+				Mode:        models.Snapshot,
+				ScheduleID:  "test_schedule_id",
+				Folder:      "artifact_folder",
+				Compression: models.Default,
 			})
 			require.NoError(t, err)
 			assert.NotEmpty(t, artifactID)

@@ -325,6 +325,7 @@ func TestArtifacts(t *testing.T) {
 				Status:           models.SuccessBackupStatus,
 				Mode:             mode,
 				Folder:           folder,
+				Compression:      models.Default,
 				ParentArtifactID: parentID,
 			})
 			require.NoError(t, err)
