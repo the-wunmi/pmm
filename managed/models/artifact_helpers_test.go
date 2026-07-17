@@ -294,6 +294,75 @@ func TestArtifacts(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, a.MetadataList)
 	})
+
+	t.Run("FindIncrementalBaseArtifact", func(t *testing.T) {
+		tx, err := db.Begin()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, tx.Rollback())
+		})
+
+		q := tx.Querier
+		prepareLocationsAndService(q)
+
+		createSuccessful := func(name, folder, toLSN string, createdAt time.Time, parentID *string) *models.Artifact {
+			mode := models.Snapshot
+			if parentID != nil {
+				mode = models.Incremental
+			}
+			a, err := models.CreateArtifact(q, models.CreateArtifactParams{
+				Name:             name,
+				Vendor:           "MySQL",
+				LocationID:       locationID1,
+				ServiceID:        serviceID1,
+				DataModel:        models.PhysicalDataModel,
+				Status:           models.SuccessBackupStatus,
+				Mode:             mode,
+				Folder:           folder,
+				ParentArtifactID: parentID,
+			})
+			require.NoError(t, err)
+			if toLSN != "" {
+				a, err = models.UpdateArtifact(q, a.ID, models.UpdateArtifactParams{
+					Metadata: &models.Metadata{
+						BackupToolData: &models.BackupToolData{
+							XtrabackupMetadata: &models.XtrabackupMetadata{ToLSN: toLSN},
+						},
+					},
+				})
+				require.NoError(t, err)
+			}
+			_, err = q.Exec("UPDATE artifacts SET created_at = $1 WHERE id = $2", createdAt, a.ID)
+			require.NoError(t, err)
+			return a
+		}
+
+		_, err = models.FindIncrementalBaseArtifact(q, serviceID1, locationID1, "artifact_folder")
+		require.ErrorIs(t, err, models.ErrNotFound)
+
+		now := time.Now()
+		oldFull := createSuccessful("old_full", "artifact_folder", "1000", now.Add(-10*time.Hour), nil)
+		newFull := createSuccessful("new_full", "artifact_folder", "2000", now.Add(-2*time.Hour), nil)
+		createSuccessful("increment_on_old_chain", "artifact_folder", "1500", now.Add(-1*time.Hour), &oldFull.ID)
+
+		// The new full has a higher to_lsn than the newest increment and must win
+		// even though the increment's row is newer.
+		base, err := models.FindIncrementalBaseArtifact(q, serviceID1, locationID1, "artifact_folder")
+		require.NoError(t, err)
+		assert.Equal(t, newFull.ID, base.ID)
+
+		// Once an increment passes the full's LSN, it becomes the base again.
+		increment := createSuccessful("increment_on_new_chain", "artifact_folder", "2500", now.Add(-30*time.Minute), &newFull.ID)
+		base, err = models.FindIncrementalBaseArtifact(q, serviceID1, locationID1, "artifact_folder")
+		require.NoError(t, err)
+		assert.Equal(t, increment.ID, base.ID)
+
+		// A folder where no candidate records an LSN falls back to the newest one.
+		noLSN := createSuccessful("no_lsn", "other_folder", "", now, nil)
+		base, err = models.FindIncrementalBaseArtifact(q, serviceID1, locationID1, "other_folder")
+		require.NoError(t, err)
+		assert.Equal(t, noLSN.ID, base.ID)
+	})
 }
 
 func TestArtifactValidation(t *testing.T) {

@@ -70,7 +70,7 @@ type PerformBackupParams struct {
 
 const (
 	// Re-anchor with a full once an incremental chain reaches this many members (full + increments).
-	maxIncrementalChainLength = 24
+	maxIncrementalChainLength = 48
 	// Re-anchor with a full once a chain's seed full is older than this.
 	maxIncrementalBaseAge = 7 * 24 * time.Hour
 	// Unfinished artifacts untouched for this long are presumed abandoned (agent died,
@@ -155,7 +155,7 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 				switch mode {
 				case models.Snapshot:
 				case models.Incremental:
-					base, err := models.FindLatestSuccessfulArtifact(tx.Querier, params.ServiceID, params.LocationID, params.Folder)
+					base, err := models.FindIncrementalBaseArtifact(tx.Querier, params.ServiceID, params.LocationID, params.Folder)
 					if err != nil {
 						if !errors.Is(err, models.ErrNotFound) {
 							return err

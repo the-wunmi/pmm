@@ -17,6 +17,7 @@ package models
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -356,17 +357,32 @@ func (s *Artifact) MetadataRemoveFirstN(q *reform.Querier, n uint32) error {
 	return nil
 }
 
-// FindLatestSuccessfulArtifact returns the newest successful artifact for the given service, location and folder, or ErrNotFound if there is none.
-func FindLatestSuccessfulArtifact(q *reform.Querier, serviceID, locationID, folder string) (*Artifact, error) {
-	tail := "WHERE service_id = $1 AND location_id = $2 AND status = $3 AND folder = $4 ORDER BY created_at DESC LIMIT 1"
-	row, err := q.SelectOneFrom(ArtifactTable, tail, serviceID, locationID, SuccessBackupStatus, folder)
-	if err != nil {
-		if errors.Is(err, reform.ErrNoRows) {
-			return nil, errors.Wrap(ErrNotFound, "no successful artifact to base an incremental backup on")
+// FindIncrementalBaseArtifact returns the base for an incremental backup: the newest successful
+// chain anchor (no parent) or increment, whichever records the higher to_lsn; ErrNotFound if none.
+func FindIncrementalBaseArtifact(q *reform.Querier, serviceID, locationID, folder string) (*Artifact, error) {
+	var best *Artifact
+	var bestLSN uint64
+	for _, parentCond := range []string{"IS NULL", "IS NOT NULL"} {
+		tail := fmt.Sprintf(
+			"WHERE service_id = $1 AND location_id = $2 AND status = $3 AND folder = $4 AND parent_artifact_id %s ORDER BY created_at DESC LIMIT 1",
+			parentCond)
+		row, err := q.SelectOneFrom(ArtifactTable, tail, serviceID, locationID, SuccessBackupStatus, folder)
+		if err != nil {
+			if errors.Is(err, reform.ErrNoRows) {
+				continue
+			}
+			return nil, errors.WithStack(err)
 		}
-		return nil, errors.WithStack(err)
+		a := row.(*Artifact)                                           //nolint:forcetypeassert
+		lsn, _ := strconv.ParseUint(a.LatestXtrabackupToLSN(), 10, 64) // no LSN ranks lowest
+		if best == nil || lsn > bestLSN || (lsn == bestLSN && a.CreatedAt.After(best.CreatedAt)) {
+			best, bestLSN = a, lsn
+		}
 	}
-	return row.(*Artifact), nil //nolint:forcetypeassert
+	if best == nil {
+		return nil, errors.Wrap(ErrNotFound, "no successful artifact to base an incremental backup on")
+	}
+	return best, nil
 }
 
 // FindArtifactChain returns the restore chain ending at the given artifact, base-first (one element if non-incremental), or an error on a broken chain or cycle.
