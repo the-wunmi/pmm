@@ -18,6 +18,7 @@ package models
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -40,6 +41,8 @@ type ArtifactFilters struct {
 	Folder *string
 	// Return only artifacts chained off the specified parent artifact.
 	ParentArtifactID string
+	// Return only artifacts updated after this time.
+	UpdatedAfter time.Time
 }
 
 // FindArtifacts returns artifact list sorted by creation time in DESCENDING order.
@@ -78,6 +81,12 @@ func FindArtifacts(q *reform.Querier, filters ArtifactFilters) ([]*Artifact, err
 	if filters.ParentArtifactID != "" {
 		conditions = append(conditions, fmt.Sprintf("parent_artifact_id = %s", q.Placeholder(idx)))
 		args = append(args, filters.ParentArtifactID)
+		idx++
+	}
+
+	if !filters.UpdatedAfter.IsZero() {
+		conditions = append(conditions, fmt.Sprintf("updated_at > %s", q.Placeholder(idx)))
+		args = append(args, filters.UpdatedAfter)
 		idx++
 	}
 

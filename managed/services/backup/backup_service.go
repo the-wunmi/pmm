@@ -74,6 +74,9 @@ const (
 	maxIncrementalChainLength = 24
 	// Re-anchor with a full once a chain's seed full is older than this.
 	maxIncrementalBaseAge = 7 * 24 * time.Hour
+	// Unfinished artifacts untouched for this long are presumed abandoned (agent died,
+	// pmm-managed restarted) and stop blocking scheduled runs. Matches agents.maxRestartInterval.
+	maxUnfinishedArtifactAge = 8 * time.Hour
 )
 
 // PerformBackup starts on-demand backup.
@@ -107,6 +110,24 @@ func (s *Service) PerformBackup(ctx context.Context, params PerformBackupParams)
 
 			if err = services.CheckArtifactOverlapping(tx.Querier, params.ServiceID, params.LocationID, params.Folder); err != nil {
 				return err
+			}
+
+			// Skip scheduled runs while a previous run of the same schedule hasn't finished.
+			if params.ScheduleID != "" {
+				for _, unfinished := range []models.BackupStatus{models.PendingBackupStatus, models.InProgressBackupStatus} {
+					artifacts, err := models.FindArtifacts(tx.Querier, models.ArtifactFilters{
+						ScheduleID:   params.ScheduleID,
+						Status:       unfinished,
+						UpdatedAfter: models.Now().Add(-maxUnfinishedArtifactAge),
+					})
+					if err != nil {
+						return err
+					}
+					if len(artifacts) != 0 {
+						return errors.WithMessagef(ErrAnotherOperationInProgress,
+							"artifact %s from the same schedule is still %s", artifacts[0].Name, unfinished)
+					}
+				}
 			}
 
 			svc, err = models.FindServiceByID(tx.Querier, params.ServiceID)

@@ -65,3 +65,22 @@ func TestReadXtrabackupCheckpoints(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+func TestXtrabackupSupportsPageTracking(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		output    string
+		supported bool
+	}{
+		{"xtrabackup version 8.0.35-30 based on MySQL server 8.0.35 Linux (x86_64) (revision id: 6beb4b49)", true},
+		{"xtrabackup version 8.0.27-19 based on MySQL server 8.0.27 Linux (x86_64)", true},
+		{"xtrabackup version 8.4.0-1 based on MySQL server 8.4.0 Linux (x86_64)", true},
+		{"xtrabackup version 8.0.26-18 based on MySQL server 8.0.26 Linux (x86_64)", false},
+		{"xtrabackup version 2.4.29 based on MySQL server 5.7.44 Linux (x86_64)", false},
+		{"garbage output", false},
+		{"", false},
+	} {
+		assert.Equal(t, tc.supported, xtrabackupSupportsPageTracking(tc.output), "output: %q", tc.output)
+	}
+}

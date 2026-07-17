@@ -17,13 +17,18 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"net"
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -36,6 +41,16 @@ const (
 	xtrabackupBin = "xtrabackup"
 	xbcloudBin    = "xbcloud"
 	qpressBin     = "qpress"
+
+	pageTrackingUDF = "mysqlbackup_page_track_set"
+
+	pageTrackingProbeTimeout = 30 * time.Second
+)
+
+var (
+	xtrabackupVersionRegexp = regexp.MustCompile(`xtrabackup version ([!-~]*)`)
+	// First XtraBackup version supporting --page-tracking.
+	minPageTrackingXtrabackupVersion = version.Must(version.NewVersion("8.0.27"))
 )
 
 // MySQLBackupJob implements Job for MySQL backup.
@@ -161,6 +176,72 @@ func readXtrabackupCheckpoints(dir string) (*backuppb.XtrabackupMetadata, error)
 	return metadata, nil
 }
 
+func xtrabackupSupportsPageTracking(versionOutput string) bool {
+	m := xtrabackupVersionRegexp.FindStringSubmatch(versionOutput)
+	if len(m) != 2 {
+		return false
+	}
+	v, err := version.NewVersion(m[1])
+	if err != nil {
+		return false
+	}
+	return v.Core().GreaterThanOrEqual(minPageTrackingXtrabackupVersion)
+}
+
+func (j *MySQLBackupJob) openMySQL() (*sql.DB, error) {
+	cfg := mysql.NewConfig()
+	cfg.User = j.connConf.User
+	cfg.Passwd = j.connConf.Password
+	cfg.TLSConfig = "preferred"
+	if j.connConf.Address != "" {
+		cfg.Net = "tcp"
+		cfg.Addr = net.JoinHostPort(j.connConf.Address, strconv.Itoa(j.connConf.Port))
+	} else {
+		cfg.Net = "unix"
+		cfg.Addr = j.connConf.Socket
+	}
+
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+	return sql.OpenDB(connector), nil
+}
+
+func (j *MySQLBackupJob) pageTrackingUsable(ctx context.Context) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, pageTrackingProbeTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(probeCtx, xtrabackupBin, "--version").CombinedOutput()
+	if err != nil {
+		j.l.WithError(err).Debug("failed to get xtrabackup version")
+		return false
+	}
+	if !xtrabackupSupportsPageTracking(string(out)) {
+		return false
+	}
+
+	db, err := j.openMySQL()
+	if err != nil {
+		j.l.WithError(err).Debug("failed to open mysql connection for page tracking probe")
+		return false
+	}
+	defer db.Close() //nolint:errcheck
+
+	var one int
+	err = db.QueryRowContext(probeCtx,
+		"SELECT 1 FROM performance_schema.user_defined_functions WHERE udf_name = ? LIMIT 1",
+		pageTrackingUDF).Scan(&one)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false
+	case err != nil:
+		j.l.WithError(err).Debug("failed to check mysqlbackup component")
+		return false
+	}
+	return true
+}
+
 func (j *MySQLBackupJob) binariesInstalled() error {
 	_, err := exec.LookPath(xtrabackupBin)
 	if err != nil {
@@ -243,6 +324,10 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 	case backuppb.BackupCompression_BACKUP_COMPRESSION_NONE:
 	default:
 		return errors.Errorf("unknown compression: %s", j.compression)
+	}
+
+	if j.pageTrackingUsable(ctx) {
+		xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--page-tracking")
 	}
 
 	if j.connConf.User != "" {
