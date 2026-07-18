@@ -236,6 +236,45 @@ func TestDeleteArtifact(t *testing.T) {
 		require.ErrorIs(t, err, models.ErrNotFound)
 	})
 
+	t.Run("failed artifact removes partial upload", func(t *testing.T) {
+		artifact, err := models.CreateArtifact(db.Querier, models.CreateArtifactParams{
+			Name:       "failed_artifact",
+			Vendor:     "MySQL",
+			LocationID: locationRes.ID,
+			ServiceID:  *agent.ServiceID,
+			DataModel:  models.PhysicalDataModel,
+			Mode:       models.Snapshot,
+			Status:     models.ErrorBackupStatus,
+			Folder:     "artifact_folder",
+		})
+		require.NoError(t, err)
+
+		mockedStorage.On("RemoveRecursive", mock.Anything, s3Config.Endpoint, s3Config.AccessKey, s3Config.SecretKey, s3Config.BucketName, "artifact_folder/failed_artifact/").
+			Return(nil).Once()
+
+		err = removalService.DeleteArtifact(mockedStorage, artifact.ID, true)
+		require.NoError(t, err)
+
+		// Removing files running in goroutine, need to wait some time.
+		time.Sleep(time.Second * 3)
+
+		artifact, err = models.FindArtifactByID(db.Querier, artifact.ID)
+		assert.Nil(t, artifact)
+		require.ErrorIs(t, err, models.ErrNotFound)
+	})
+
+	t.Run("failed legacy artifact without folder keeps files", func(t *testing.T) {
+		artifact := createArtifact(models.ErrorBackupStatus)
+
+		// No RemoveRecursive expectation: storage must not be touched.
+		err := removalService.DeleteArtifact(mockedStorage, artifact.ID, true)
+		require.NoError(t, err)
+
+		artifact, err = models.FindArtifactByID(db.Querier, artifact.ID)
+		assert.Nil(t, artifact)
+		require.ErrorIs(t, err, models.ErrNotFound)
+	})
+
 	mockedPbmPITRService.AssertExpectations(t)
 	mockedStorage.AssertExpectations(t)
 }
