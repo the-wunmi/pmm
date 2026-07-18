@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -52,7 +53,21 @@ var (
 	xtrabackupVersionRegexp = regexp.MustCompile(`xtrabackup version ([!-~]*)`)
 	// First XtraBackup version supporting --page-tracking.
 	minPageTrackingXtrabackupVersion = version.Must(version.NewVersion("8.0.27"))
+	// First XtraBackup version with the FIFO datasink.
+	minFifoXtrabackupVersion = version.Must(version.NewVersion("8.0.33"))
 )
+
+func xtrabackupSupportsFifo(versionOutput string) bool {
+	m := xtrabackupVersionRegexp.FindStringSubmatch(versionOutput)
+	if len(m) != 2 {
+		return false
+	}
+	v, err := version.NewVersion(m[1])
+	if err != nil {
+		return false
+	}
+	return v.Core().GreaterThanOrEqual(minFifoXtrabackupVersion)
+}
 
 // MySQLBackupJob implements Job for MySQL backup.
 type MySQLBackupJob struct {
@@ -301,6 +316,14 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 		}
 	}()
 
+	fifoStreams := 0
+	if j.locationConfig.Type == S3BackupLocationType {
+		if out, err := exec.CommandContext(pipeCtx, xtrabackupBin, "--version").CombinedOutput(); err == nil &&
+			xtrabackupSupportsFifo(string(out)) {
+			fifoStreams = 10
+		}
+	}
+
 	xtrabackupCmd := exec.CommandContext(pipeCtx,
 		xtrabackupBin,
 		"--backup",
@@ -309,8 +332,13 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 		"--target-dir="+tmpDir,
 		"--extra-lsndir="+lsnDir) // #nosec G204
 
+	// Copy threads feed the FIFO streams when the datasink is active; compression threads stay CPU-bound.
 	threads := strconv.Itoa(max(2, min(8, runtime.NumCPU()/2)))
-	xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--parallel="+threads, "--compress-threads="+threads)
+	parallel := threads
+	if fifoStreams > 0 {
+		parallel = strconv.Itoa(fifoStreams)
+	}
+	xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--parallel="+parallel, "--compress-threads="+threads)
 
 	if j.baseLSN != "" {
 		xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--incremental-lsn="+j.baseLSN)
@@ -332,6 +360,24 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 
 	if j.pageTrackingUsable(ctx) {
 		xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--page-tracking")
+	}
+
+	var fifoDir string
+	if fifoStreams > 0 {
+		fifoDir, err = os.MkdirTemp("", "mysql-backup-fifo")
+		if err != nil {
+			return errors.Wrap(err, "failed to create FIFO tempdir")
+		}
+		defer func() {
+			if err := os.RemoveAll(fifoDir); err != nil {
+				j.l.WithError(err).Warn("failed to remove FIFO temporary directory")
+			}
+		}()
+
+		j.l.Infof("Using FIFO datasink with %d streams.", fifoStreams)
+		xtrabackupCmd.Args = append(xtrabackupCmd.Args,
+			"--fifo-streams="+strconv.Itoa(fifoStreams),
+			"--fifo-dir="+fifoDir)
 	}
 
 	if j.connConf.User != "" {
@@ -368,6 +414,12 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 			"--s3-region="+j.locationConfig.S3Config.BucketRegion,
 			"--parallel=10",
 			artifactFolder) // #nosec G204
+
+		if fifoStreams > 0 {
+			xbcloudCmd.Args = append(xbcloudCmd.Args,
+				"--fifo-streams="+strconv.Itoa(fifoStreams),
+				"--fifo-dir="+fifoDir)
+		}
 	default:
 		return errors.Errorf("unknown location config")
 	}
@@ -377,9 +429,12 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 	var errCloudBuffer bytes.Buffer
 	xtrabackupCmd.Stderr = &errBackupBuffer
 
-	xtrabackupStdout, err := xtrabackupCmd.StdoutPipe()
-	if err != nil {
-		return errors.Wrapf(err, "failed to get xtrabackup stdout pipe")
+	var xtrabackupStdout io.ReadCloser
+	if fifoStreams == 0 {
+		xtrabackupStdout, err = xtrabackupCmd.StdoutPipe()
+		if err != nil {
+			return errors.Wrapf(err, "failed to get xtrabackup stdout pipe")
+		}
 	}
 
 	wrapError := func(err error) error {
@@ -408,7 +463,9 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 		return nil
 	}
 
-	xbcloudCmd.Stdin = xtrabackupStdout
+	if fifoStreams == 0 {
+		xbcloudCmd.Stdin = xtrabackupStdout
+	}
 	xbcloudCmd.Stdout = &outBuffer
 	xbcloudCmd.Stderr = &errCloudBuffer
 	if err := xbcloudCmd.Start(); err != nil {

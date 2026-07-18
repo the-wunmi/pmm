@@ -198,6 +198,8 @@ func prepareRestoreCommands( //nolint:nonamedreturns
 	folder string,
 	config *BackupLocationConfig,
 	targetDirectory string,
+	fifoDir string,
+	fifoStreams int,
 	stderr io.Writer,
 	stdout io.Writer,
 ) (xbcloud, xbstream *exec.Cmd, _ error) {
@@ -216,11 +218,6 @@ func prepareRestoreCommands( //nolint:nonamedreturns
 	)
 	xbcloudCmd.Stderr = stderr
 
-	xbcloudStdout, err := xbcloudCmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, errors.Wrapf(err, "failed to get xbcloud stdout pipe")
-	}
-
 	xbstreamCmd := exec.CommandContext( //nolint:gosec
 		ctx,
 		xbstreamBin,
@@ -229,9 +226,24 @@ func prepareRestoreCommands( //nolint:nonamedreturns
 		"--directory="+targetDirectory,
 		"--parallel="+restoreParallelism,
 	)
-	xbstreamCmd.Stdin = xbcloudStdout
 	xbstreamCmd.Stderr = stderr
 	xbstreamCmd.Stdout = stdout
+
+	if fifoStreams > 0 {
+		fifoArgs := []string{
+			"--fifo-streams=" + strconv.Itoa(fifoStreams),
+			"--fifo-dir=" + fifoDir,
+		}
+		xbcloudCmd.Args = append(xbcloudCmd.Args, fifoArgs...)
+		xbstreamCmd.Args = append(xbstreamCmd.Args, fifoArgs...)
+		return xbcloudCmd, xbstreamCmd, nil
+	}
+
+	xbcloudStdout, err := xbcloudCmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, errors.Wrapf(err, "failed to get xbcloud stdout pipe")
+	}
+	xbstreamCmd.Stdin = xbcloudStdout
 
 	return xbcloudCmd, xbstreamCmd, nil
 }
@@ -293,11 +305,35 @@ func (j *MySQLRestoreJob) downloadAndExtract(ctx context.Context, backupName, ta
 
 	j.l.Debugf("Artifact folder is: %s", artifactFolder)
 
+	fifoStreams := 0
+	if out, err := exec.CommandContext(pipeCtx, xtrabackupBin, "--version").CombinedOutput(); err == nil &&
+		xtrabackupSupportsFifo(string(out)) {
+		fifoStreams = 10
+	}
+
+	var fifoDir string
+	if fifoStreams > 0 {
+		var err error
+		fifoDir, err = os.MkdirTemp("", "mysql-restore-fifo")
+		if err != nil {
+			return errors.Wrap(err, "failed to create FIFO tempdir")
+		}
+		defer func() {
+			if err := os.RemoveAll(fifoDir); err != nil {
+				j.l.WithError(err).Warn("failed to remove FIFO temporary directory")
+			}
+		}()
+
+		j.l.Infof("Using FIFO datasink with %d streams.", fifoStreams)
+	}
+
 	xbcloudCmd, xbstreamCmd, err := prepareRestoreCommands(
 		pipeCtx,
 		artifactFolder,
 		&j.locationConfig,
 		targetDirectory,
+		fifoDir,
+		fifoStreams,
 		&stderr,
 		&stdout,
 	)
