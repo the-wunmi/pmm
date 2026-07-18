@@ -17,12 +17,15 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/go-version"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -36,6 +39,24 @@ const (
 	xbcloudBin    = "xbcloud"
 	qpressBin     = "qpress"
 )
+
+var (
+	xtrabackupVersionRegexp = regexp.MustCompile(`xtrabackup version ([!-~]*)`)
+	// First XtraBackup version with the FIFO datasink.
+	minFifoXtrabackupVersion = version.Must(version.NewVersion("8.0.33"))
+)
+
+func xtrabackupSupportsFifo(versionOutput string) bool {
+	m := xtrabackupVersionRegexp.FindStringSubmatch(versionOutput)
+	if len(m) != 2 {
+		return false
+	}
+	v, err := version.NewVersion(m[1])
+	if err != nil {
+		return false
+	}
+	return v.Core().GreaterThanOrEqual(minFifoXtrabackupVersion)
+}
 
 // MySQLBackupJob implements Job for MySQL backup.
 type MySQLBackupJob struct {
@@ -153,6 +174,14 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 		}
 	}()
 
+	fifoStreams := 0
+	if j.locationConfig.Type == S3BackupLocationType {
+		if out, err := exec.CommandContext(pipeCtx, xtrabackupBin, "--version").CombinedOutput(); err == nil &&
+			xtrabackupSupportsFifo(string(out)) {
+			fifoStreams = 10
+		}
+	}
+
 	xtrabackupCmd := exec.CommandContext(pipeCtx,
 		xtrabackupBin,
 		"--compress",
@@ -160,6 +189,25 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 		// Target dir is created, even though it's empty, because we are streaming it to cloud.
 		// https://jira.percona.com/browse/PXB-2602
 		"--target-dir="+tmpDir) // #nosec G204
+
+	var fifoDir string
+	if fifoStreams > 0 {
+		fifoDir, err = os.MkdirTemp("", "mysql-backup-fifo")
+		if err != nil {
+			return errors.Wrap(err, "failed to create FIFO tempdir")
+		}
+		defer func() {
+			if err := os.RemoveAll(fifoDir); err != nil {
+				j.l.WithError(err).Warn("failed to remove FIFO temporary directory")
+			}
+		}()
+
+		j.l.Infof("Using FIFO datasink with %d streams.", fifoStreams)
+		xtrabackupCmd.Args = append(xtrabackupCmd.Args,
+			"--parallel="+strconv.Itoa(fifoStreams),
+			"--fifo-streams="+strconv.Itoa(fifoStreams),
+			"--fifo-dir="+fifoDir)
+	}
 
 	if j.connConf.User != "" {
 		xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--user="+j.connConf.User)
@@ -195,6 +243,12 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 			"--s3-region="+j.locationConfig.S3Config.BucketRegion,
 			"--parallel=10",
 			artifactFolder) // #nosec G204
+
+		if fifoStreams > 0 {
+			xbcloudCmd.Args = append(xbcloudCmd.Args,
+				"--fifo-streams="+strconv.Itoa(fifoStreams),
+				"--fifo-dir="+fifoDir)
+		}
 	default:
 		return errors.Errorf("unknown location config")
 	}
@@ -204,9 +258,12 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 	var errCloudBuffer bytes.Buffer
 	xtrabackupCmd.Stderr = &errBackupBuffer
 
-	xtrabackupStdout, err := xtrabackupCmd.StdoutPipe()
-	if err != nil {
-		return errors.Wrapf(err, "failed to get xtrabackup stdout pipe")
+	var xtrabackupStdout io.ReadCloser
+	if fifoStreams == 0 {
+		xtrabackupStdout, err = xtrabackupCmd.StdoutPipe()
+		if err != nil {
+			return errors.Wrapf(err, "failed to get xtrabackup stdout pipe")
+		}
 	}
 
 	wrapError := func(err error) error {
@@ -235,7 +292,9 @@ func (j *MySQLBackupJob) backup(ctx context.Context) (rerr error) {
 		return nil
 	}
 
-	xbcloudCmd.Stdin = xtrabackupStdout
+	if fifoStreams == 0 {
+		xbcloudCmd.Stdin = xtrabackupStdout
+	}
 	xbcloudCmd.Stdout = &outBuffer
 	xbcloudCmd.Stderr = &errCloudBuffer
 	if err := xbcloudCmd.Start(); err != nil {
