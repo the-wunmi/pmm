@@ -54,7 +54,7 @@ func (s *RemovalService) DeleteArtifact(storage Storage, artifactID string, remo
 	}
 
 	// For cases when it's not clear can files be removed or not - cannot tell new from legacy artifacts.
-	if prevStatus != models.SuccessBackupStatus && len(artifact.MetadataList) == 0 {
+	if prevStatus != models.SuccessBackupStatus && len(artifact.MetadataList) == 0 && artifact.Folder == "" {
 		removeFiles = false
 	}
 
@@ -278,9 +278,10 @@ func (s *RemovalService) deleteArtifactFiles(ctx context.Context, storage Storag
 		return nil
 	}
 
-	// Old artifact records don't contain representation file list.
+	// No file list: legacy artifacts, or backups that failed before reporting metadata
+	// (partial uploads). Both live under <folder>/<name>/ (folder is empty for legacy).
 	if len(artifact.MetadataList) == 0 {
-		folderName := artifact.Name + "/"
+		folderName := path.Join(artifact.Folder, artifact.Name) + "/"
 
 		s.l.Debugf("Deleting folder %s.", folderName)
 		err := storage.RemoveRecursive(ctx, s3Config.Endpoint, s3Config.AccessKey, s3Config.SecretKey, s3Config.BucketName, folderName)
