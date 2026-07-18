@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -307,6 +308,9 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 		// https://jira.percona.com/browse/PXB-2602
 		"--target-dir="+tmpDir,
 		"--extra-lsndir="+lsnDir) // #nosec G204
+
+	threads := strconv.Itoa(max(2, min(8, runtime.NumCPU()/2)))
+	xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--parallel="+threads, "--compress-threads="+threads)
 
 	if j.baseLSN != "" {
 		xtrabackupCmd.Args = append(xtrabackupCmd.Args, "--incremental-lsn="+j.baseLSN)
