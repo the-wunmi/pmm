@@ -320,7 +320,7 @@ func (j *MySQLBackupJob) streamBackup(ctx context.Context, lsnDir string) (rerr 
 	if j.locationConfig.Type == S3BackupLocationType {
 		if out, err := exec.CommandContext(pipeCtx, xtrabackupBin, "--version").CombinedOutput(); err == nil &&
 			xtrabackupSupportsFifo(string(out)) {
-			fifoStreams = 10
+			fifoStreams = max(2, min(8, runtime.NumCPU()/2))
 		}
 	}
 

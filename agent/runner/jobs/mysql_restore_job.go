@@ -24,6 +24,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -308,7 +309,7 @@ func (j *MySQLRestoreJob) downloadAndExtract(ctx context.Context, backupName, ta
 	fifoStreams := 0
 	if out, err := exec.CommandContext(pipeCtx, xtrabackupBin, "--version").CombinedOutput(); err == nil &&
 		xtrabackupSupportsFifo(string(out)) {
-		fifoStreams = 10
+		fifoStreams = max(2, min(8, runtime.NumCPU()/2))
 	}
 
 	var fifoDir string
